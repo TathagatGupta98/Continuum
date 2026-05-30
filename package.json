@@ -1,0 +1,12 @@
+{
+  "name": "continuum",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "build:contracts": "cd packages/contracts && sui move build",
+    "test:contracts": "cd packages/contracts && sui move test",
+    "dev:backend": "cd packages/backend && pnpm dev",
+    "dev:frontend": "cd packages/frontend && pnpm dev"
+  }
+}
