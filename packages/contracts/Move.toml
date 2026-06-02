@@ -1,0 +1,15 @@
+[package]
+name = "continuum"
+version = "0.1.0"
+edition = "2024.beta"
+# Continuum — unified continuous-distribution prediction market, ported from
+# the Arbitrum Stylus (Rust/WASM) implementation to Sui Move.
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+
+[addresses]
+continuum = "0x0"
+
+[dev-addresses]
+continuum = "0x0"
