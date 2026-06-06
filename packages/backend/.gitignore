@@ -1,0 +1,12 @@
+node_modules
+# Keep environment variables out of version control
+.env
+
+/src/generated/prisma
+
+# Local SQLite database — never version it; a git restore while the server is
+# running swaps the file out and breaks writes (SQLITE_READONLY_DBMOVED)
+dev.db
+dev.db-journal
+dev.db-wal
+dev.db-shm
