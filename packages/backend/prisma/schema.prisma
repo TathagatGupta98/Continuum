@@ -1,0 +1,59 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum RolePreference {
+  STAKER
+  LP
+}
+
+enum Direction {
+  ABOVE
+  BELOW
+}
+
+model User {
+  walletAddress             String          @id
+  rolePreference            RolePreference  @default(STAKER)
+  globalAccumulatorSnapshot Float           @default(0)
+  totalLiquidityProvided    Float           @default(0)
+  positions                 Position[]
+}
+
+model Market {
+  marketId          String     @id
+  title             String
+  category          String
+  currentMu         Float
+  currentSigma      Float
+  totalLiquidity    Float      @default(0)
+  globalAccumulator Float      @default(0)
+  minVarianceBound  Float
+  // Sui shared `Market<T>` object id (replaces the three EVM proxy addresses).
+  objectId          String     @default("")
+  // Fully-qualified collateral coin type `T`, e.g. `0x..::mock_usdc::MOCK_USDC`.
+  collateralType    String     @default("")
+  isResolved        Boolean    @default(false)
+  // Externally-observed settlement price (signed). Win/lose is per-position:
+  // YES wins iff finalPrice >= strike, NO wins iff finalPrice < strike.
+  finalPrice        Float?
+  positions         Position[]
+}
+
+model Position {
+  positionId   String    @id
+  userAddress  String
+  marketId     String
+  targetValueX Float
+  direction    Direction
+  tokensMinted Float
+  stakeAmount  Float
+
+  user   User   @relation(fields: [userAddress], references: [walletAddress])
+  market Market @relation(fields: [marketId], references: [marketId])
+}
