@@ -1,0 +1,113 @@
+/**
+ * Database seed script — Sui edition.
+ *
+ * Usage:  pnpm db:seed
+ *
+ * Flow:
+ *   1. Connect to a Sui full node.
+ *   2. Discover every market from the package's `MarketCreated` events
+ *      (the shared `Registry` mirrors the same set).
+ *   3. For each market: read μ/σ/σ_min/liquidity from the `Market<T>` object and
+ *      its collateral type, then upsert into Prisma.
+ *
+ * Curated titles below override the on-chain title for known market ids; the
+ * frontend's PATCH /metadata route can also set them at runtime.
+ */
+
+import { SuiClient } from '@mysten/sui/client';
+import { config } from '../config';
+import prisma from '../models/db';
+import { getMarketState, getSigmaMin, getCollateralType } from '../services/chainService';
+
+const MARKET_TITLES: Record<string, { title: string; category: string }> = {
+  '0': { title: 'What will the price of BTC be by the end of 2026?', category: 'crypto' },
+  '1': { title: 'What will the price of ETH be by the end of 2026?', category: 'crypto' },
+};
+
+async function seed() {
+  console.log('🌱 Starting database seed (Sui)...\n');
+
+  const client = new SuiClient({ url: config.SUI_RPC_URL });
+
+  // ─── Discover markets from MarketCreated events ───
+  const created: Array<{ marketId: string; objectId: string; title: string }> = [];
+  let cursor: any = null;
+  do {
+    const page = await client.queryEvents({
+      query: { MoveEventType: `${config.PACKAGE_ID}::market::MarketCreated` },
+      cursor,
+      order: 'ascending',
+    });
+    for (const ev of page.data) {
+      const j: any = ev.parsedJson;
+      created.push({ marketId: String(j.market_id), objectId: String(j.market), title: String(j.title ?? '') });
+    }
+    cursor = page.hasNextPage ? page.nextCursor : null;
+  } while (cursor);
+
+  console.log(`📊 Discovered ${created.length} market(s) on-chain\n`);
+  if (created.length === 0) {
+    console.log('⚠️  No markets found. Nothing to seed.');
+    return;
+  }
+
+  for (const { marketId, objectId, title } of created) {
+    if (config.EXCLUDED_MARKET_IDS.includes(marketId)) {
+      console.log(`─── Market #${marketId} ─── 🚫 excluded — skipping\n`);
+      continue;
+    }
+    console.log(`─── Market #${marketId} ───`);
+    console.log(`  Object:   ${objectId}`);
+
+    let currentMu = 0, currentSigma = 0, totalLiquidity = 0, minVarianceBound = 0;
+    let isResolved = false;
+    let finalPrice: number | null = null;
+    let collateralType = config.COLLATERAL_TYPE;
+
+    try {
+      const state = await getMarketState(objectId);
+      currentMu = state.mu;
+      currentSigma = state.sigma;
+      totalLiquidity = state.totalLiquidity;
+      isResolved = state.isResolved;
+      finalPrice = state.finalPrice;
+      minVarianceBound = await getSigmaMin(objectId);
+      collateralType = await getCollateralType(objectId);
+    } catch (err) {
+      console.warn(`  ⚠️  Could not read state:`, err);
+    }
+
+    console.log(`  μ: ${currentMu}  σ: ${currentSigma}  σ_min: ${minVarianceBound}`);
+    console.log(`  Liquidity: ${totalLiquidity}  Resolved: ${isResolved}`);
+
+    const curated = MARKET_TITLES[marketId];
+    const market = await prisma.market.upsert({
+      where: { marketId },
+      update: {
+        currentMu, currentSigma, totalLiquidity, minVarianceBound,
+        objectId, collateralType, isResolved, finalPrice,
+        ...(curated ? { title: curated.title, category: curated.category } : {}),
+      },
+      create: {
+        marketId,
+        title: curated?.title ?? title ?? `Market #${marketId}`,
+        category: curated?.category ?? 'general',
+        currentMu, currentSigma, totalLiquidity, minVarianceBound,
+        objectId, collateralType, isResolved, finalPrice,
+      },
+    });
+
+    console.log(`  ✅ Upserted "${market.title}" (id: ${market.marketId})\n`);
+  }
+
+  console.log('🎉 Seed complete!');
+}
+
+seed()
+  .catch((err) => {
+    console.error('❌ Seed failed:', err);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
