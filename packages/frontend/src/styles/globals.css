@@ -1,0 +1,143 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── "Ledger Paper" — warm cream + signal red + warm ink ─────────────────
+   The single theme. Cream like aged bond paper, crimson as the only loud
+   voice, deep warm ink for text. YES = deep emerald, NO = brick red.      */
+:root,
+html[data-theme="light"] {
+  --bg-base:        #F4EEE1;
+  --bg-surface:     #FDF8EE;
+  --bg-surface-2:   #F7F1E3;
+  --border:         rgba(62, 44, 30, 0.22);
+  --border-dim:     rgba(62, 44, 30, 0.13);
+  --text-primary:   #231812;
+  --text-muted:     rgba(35, 24, 18, 0.72);
+  --text-subtle:    rgba(35, 24, 18, 0.52);
+  --accent-yes:     #0B7A52;
+  --accent-no:      #B42318;
+  --accent-data:    #C8102E;
+  --accent-data-dim: rgba(200, 16, 46, 0.12);
+  --grid-line:      rgba(62, 44, 30, 0.065);
+  --nav-bg:         rgba(250, 244, 232, 0.92);
+  --nav-border:     rgba(62, 44, 30, 0.16);
+  --logo-curve:     #C8102E;
+  --nav-link-active: #C8102E;
+  --surface-pulse:  rgba(62, 44, 30, 0.05);
+  --rk-theme-accent: #C8102E;
+  --rk-theme-accent-fg: #ffffff;
+  /* chart */
+  --chart-curve:      #2A1C12;
+  --chart-axis:       rgba(62, 44, 30, 0.30);
+  --chart-tick-text:  rgba(35, 24, 18, 0.66);
+  --chart-glow:       0;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg-base);
+  background-image: linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 40px 40px;
+  color: var(--text-primary);
+  font-family: 'DM Serif Text', serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* Mono for all numbers */
+.mono,
+[data-mono],
+input[type='number'],
+.tabular-nums {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* RainbowKit overrides — cream light */
+:root [data-rk],
+html[data-theme="light"] [data-rk] {
+  --rk-colors-accentColor: #C8102E !important;
+  --rk-colors-accentColorForeground: #ffffff !important;
+  --rk-colors-actionButtonBorder: rgba(62, 44, 30, 0.12) !important;
+  --rk-colors-actionButtonBorderMobile: rgba(62, 44, 30, 0.12) !important;
+  --rk-colors-actionButtonSecondaryBackground: rgba(62, 44, 30, 0.04) !important;
+  --rk-colors-closeButton: rgba(35, 24, 18, 0.5) !important;
+  --rk-colors-closeButtonBackground: rgba(62, 44, 30, 0.06) !important;
+  --rk-colors-connectButtonBackground: rgba(62, 44, 30, 0.04) !important;
+  --rk-colors-connectButtonBackgroundError: #B42318 !important;
+  --rk-colors-connectButtonInnerBackground: rgba(62, 44, 30, 0.06) !important;
+  --rk-colors-connectButtonText: #231812 !important;
+  --rk-colors-connectButtonTextError: #231812 !important;
+  --rk-colors-connectionIndicator: #0B7A52 !important;
+  --rk-colors-downloadBottomCardBackground: #FDF8EE !important;
+  --rk-colors-downloadTopCardBackground: rgba(62, 44, 30, 0.04) !important;
+  --rk-colors-error: #B42318 !important;
+  --rk-colors-generalBorder: rgba(62, 44, 30, 0.12) !important;
+  --rk-colors-generalBorderDim: rgba(62, 44, 30, 0.07) !important;
+  --rk-colors-menuItemBackground: rgba(62, 44, 30, 0.04) !important;
+  --rk-colors-modalBackdrop: rgba(58, 40, 26, 0.45) !important;
+  --rk-colors-modalBackground: #FDF8EE !important;
+  --rk-colors-modalBorder: rgba(62, 44, 30, 0.14) !important;
+  --rk-colors-modalText: #231812 !important;
+  --rk-colors-modalTextDim: rgba(35, 24, 18, 0.5) !important;
+  --rk-colors-modalTextSecondary: rgba(35, 24, 18, 0.5) !important;
+  --rk-colors-profileAction: rgba(62, 44, 30, 0.04) !important;
+  --rk-colors-profileActionHover: rgba(62, 44, 30, 0.07) !important;
+  --rk-colors-profileForeground: rgba(62, 44, 30, 0.04) !important;
+  --rk-colors-selectedOptionBorder: #C8102E !important;
+  --rk-colors-standby: #C8102E !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(62, 44, 30, 0.22);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(200, 16, 46, 0.45);
+}
+
+/* Focus ring */
+:focus-visible {
+  outline: 1px solid var(--accent-data);
+  outline-offset: 2px;
+}
+
+/* Selection */
+::selection {
+  background: var(--accent-data-dim);
+  color: var(--text-primary);
+}
+
+/* Landing page: transparent body so ShaderBackground canvas shows through */
+body.shader-bg {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+/* Non-landing pages: transparent body so LiquidChromeBackground shows through */
+body.chrome-bg {
+  background-color: transparent !important;
+  background-image: none !important;
+}
