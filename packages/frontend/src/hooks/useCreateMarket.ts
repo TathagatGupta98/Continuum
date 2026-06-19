@@ -10,11 +10,6 @@ import { floatToWad } from '@/lib/math'
 
 export type CreateStep = 'idle' | 'submitting' | 'confirmed' | 'error'
 
-// `create_market` needs a scheduled close time (Clock ms). The modal only asks
-// for σ-min, so default the close to one year out — every resolution path is
-// gated on it, and it can't be changed after creation.
-const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000
-
 export function useCreateMarket() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -25,13 +20,23 @@ export function useCreateMarket() {
   const [error, setError] = useState<Error | undefined>()
 
   const create = useCallback(
-    async (sigmaMin: number, meta?: { title: string; category?: string }) => {
+    async (
+      sigmaMin: number,
+      resolvesAtMs: number,
+      meta?: { title: string; category?: string },
+    ) => {
       if (!account) return
       setError(undefined)
       try {
+        // `create_market` needs a scheduled close time (Clock ms). Every
+        // resolution path is gated on it and it can't be changed after creation,
+        // so it must be a real future timestamp picked by the creator.
+        const resolvesAt = Math.floor(resolvesAtMs)
+        if (!Number.isFinite(resolvesAt) || resolvesAt <= Date.now()) {
+          throw new Error('Resolution time must be a date in the future')
+        }
         setStep('submitting')
         const titleBytes = Array.from(new TextEncoder().encode(meta?.title ?? ''))
-        const resolvesAt = Date.now() + ONE_YEAR_MS
 
         const tx = new Transaction()
         // create_market<T>(registry, title: vector<u8>, sigma_min_mag, resolves_at)
