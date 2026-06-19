@@ -27,7 +27,7 @@ export function Navbar() {
             <line x1="16" y1="8" x2="16" y2="24" stroke="rgba(43,29,20,0.40)" strokeWidth="1" strokeDasharray="2 2" />
           </svg>
           <span className="font-display font-800 text-sm tracking-wider text-[#231812] group-hover:text-[#C8102E] transition-colors duration-200">
-            OMNI<span className="text-[#C8102E]">CURVE</span>
+            CONTIN<span className="text-[#C8102E]">UUM</span>
           </span>
         </Link>
 

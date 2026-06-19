@@ -45,7 +45,7 @@ export default function Landing() {
         {...fadeUp(showIntro ? 0 : 3.2, 1)}
       >
         <span className="font-display font-800 text-sm tracking-wider text-[#231812]">
-          OMNI<span className="text-[#C8102E]">CURVE</span>
+          CONTIN<span className="text-[#C8102E]">UUM</span>
         </span>
 
         <div className="flex items-center gap-3">

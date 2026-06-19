@@ -14,10 +14,9 @@ import { LPPanel } from '@/components/market/LPPanel'
 import { Tabs } from '@/components/ui/Tabs'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import { Input } from '@/components/ui/Input'
-import { shortAddr, floatToWadParts } from '@/lib/math'
+import { shortAddr } from '@/lib/math'
 import { getMarketOwner } from '@/lib/sui'
-import { target, CLOCK_ID } from '@/config/contracts'
+import { target } from '@/config/contracts'
 import { explorerUrl } from '@/config/sui'
 
 const TRADE_TABS = [
@@ -25,9 +24,6 @@ const TRADE_TABS = [
   { label: 'Provide Liquidity', value: 'lp' },
 ]
 
-// Markets whose owner-controls panel is hidden in the UI.
-// #6 = "What year will Anthropic release a new claude model after Fable?"
-const HIDDEN_OWNER_CONTROLS_MARKET_IDS = ['6']
 
 const DARK = {
   loadSkeleton:   'bg-[rgba(10,10,10,0.50)]',
@@ -100,7 +96,6 @@ export default function MarketDetail() {
   const { spotUsd } = useSpotPrice(spotSymbol)
   const [activeTab, setActiveTab] = useState('trade')
   const [strikeX, setStrikeX] = useState<number | undefined>()
-  const [finalPriceInput, setFinalPriceInput] = useState('')
   const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction()
 
   // The backend doesn't persist the market owner; read it from the shared
@@ -137,32 +132,8 @@ export default function MarketDetail() {
   const finalPrice = market.finalPrice
   const isOwner = !!address && !!onChainOwner && address.toLowerCase() === onChainOwner
 
-  // Two-phase resolution (propose → 24h timelock → execute) against a real-world
-  // final price. Win/lose is decided per Position; there is no single winning side.
-  const handleProposeResolution = async () => {
-    const price = parseFloat(finalPriceInput)
-    if (!Number.isFinite(price)) return
-    const { mag, neg } = floatToWadParts(price)
-    const tx = new Transaction()
-    // propose_resolution<T>(market, price_mag, price_neg, clock)
-    tx.moveCall({
-      target: target('propose_resolution'),
-      typeArguments: [market.collateralType],
-      arguments: [tx.object(market.objectId), tx.pure.u256(mag), tx.pure.bool(neg), tx.object(CLOCK_ID)],
-    })
-    await signAndExecute({ transaction: tx })
-  }
-
-  const handleExecuteResolution = async () => {
-    const tx = new Transaction()
-    // execute_resolution<T>(market, clock)
-    tx.moveCall({
-      target: target('execute_resolution'),
-      typeArguments: [market.collateralType],
-      arguments: [tx.object(market.objectId), tx.object(CLOCK_ID)],
-    })
-    await signAndExecute({ transaction: tx })
-  }
+  // Resolution is handled off-app for now — an AI oracle will drive it (TODO).
+  // The owner-facing two-phase resolution panel was removed pending that work.
 
   // Redeem one winning Position object for collateral (consumes the object).
   const handleClaimWinnings = async (positionId: string) => {
@@ -282,37 +253,6 @@ export default function MarketDetail() {
               </p>
             )
           )}
-        </div>
-      )}
-
-      {/* ── Owner controls ─────────────────────────────────────────── */}
-      {isOwner && !resolved && !HIDDEN_OWNER_CONTROLS_MARKET_IDS.includes(String(market.marketId)) && (
-        <div className={`border rounded-xl p-5 transition-colors duration-300 ${T.ownerBox}`}>
-          <p className={`text-xs font-display tracking-widest uppercase mb-4 transition-colors duration-300 ${T.ownerLabel}`}>
-            Owner Controls
-          </p>
-          <p className={`text-xs font-mono mb-3 transition-colors duration-300 ${T.resolvedSub}`}>
-            Two-phase resolution: propose the real-world final price to start the 24h timelock,
-            then execute once it elapses. Each position settles against its own strike.
-          </p>
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="w-44">
-              <Input
-                label="Final price"
-                type="number"
-                placeholder="e.g. 95000"
-                prefix="$"
-                value={finalPriceInput}
-                onChange={(e) => setFinalPriceInput(e.target.value)}
-              />
-            </div>
-            <Button variant="ghost" size="sm" onClick={handleProposeResolution}>
-              Propose Resolution
-            </Button>
-            <Button variant="muted" size="sm" onClick={handleExecuteResolution}>
-              Execute Resolution
-            </Button>
-          </div>
         </div>
       )}
 

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 /**
  * Live spot price (USD) for the market chart's vertical reference line.
  *
- * This is a demo/PoC convenience — OmniCurve has no on-chain oracle. The price is
+ * This is a demo/PoC convenience — Continuum has no on-chain oracle. The price is
  * shown purely as a vertical marker on the Gaussian chart so traders can compare the
  * market's belief (μ) against the real world. It does NOT drive pricing or settlement.
  *

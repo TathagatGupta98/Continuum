@@ -32,7 +32,7 @@ export default function PageWrapper() {
             <p className={`text-xs font-mono transition-colors duration-300 ${
               isDark ? 'text-[rgba(242,242,242,0.55)]' : 'text-[rgba(35,24,18,0.50)]'
             }`}>
-              OmniCurve — Sui Testnet
+              Continuum — Sui Testnet
             </p>
             <div className={`flex items-center gap-4 text-xs font-mono transition-colors duration-300 ${
               isDark ? 'text-[rgba(242,242,242,0.55)]' : 'text-[rgba(35,24,18,0.50)]'

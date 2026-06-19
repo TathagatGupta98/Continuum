@@ -410,7 +410,7 @@ function ScrollStory() {
           slice of capital.
         </Caption>
         <Caption t={t} win={[0.15, 0.18, 0.21, 0.24]} num="02 / 06" title="The collapse">
-          OmniCurve collapses every strike into one pool, governed by a single Gaussian
+          Continuum collapses every strike into one pool, governed by a single Gaussian
           curve. Liquidity is never fragmented again: one curve prices every outcome at once.
         </Caption>
         <Caption t={t} win={[0.25, 0.28, 0.37, 0.4]} num="03 / 06" title="Belief, drawn">
@@ -427,7 +427,7 @@ function ScrollStory() {
           win={[0.645, 0.675, 0.765, 0.79]}
           num="05 / 06"
           title="Skin in the game"
-          foot="Verified on-chain: this exact 2 USDC trade moved Market #0 on Arbitrum Sepolia."
+          foot="Verified on-chain: this exact 2 USDC trade moved a live market on Sui testnet."
         >
           Every bet folds its stake into the curve — a stake-weighted average of all strikes.
           Bettors move μ and σ; liquidity providers never can. Moving the market always costs
@@ -814,7 +814,7 @@ const MATH_PLATES = [
   {
     label: 'On-chain stack',
     lines: ['erf ≈ Abramowitz–Stegun (err < 1.5e−7)', 'eˣ = 18-term Taylor · √ = Newton'],
-    note: 'All of it in WAD (1e18) fixed-point I256 — ~11 significant digits, computed in Rust compiled to WASM on Arbitrum Stylus. No oracle does the math for us.',
+    note: 'All of it in WAD (1e18) fixed-point — ~11 significant digits, computed on-chain in Sui Move (signed-magnitude Fp over u256). No oracle does the math for us.',
   },
   {
     label: 'Fees',
@@ -1119,13 +1119,13 @@ function OracleScroll() {
             </motion.text>
           </motion.g>
 
-          {/* resolution output — hands the one number to the Router */}
+          {/* resolution output — the owner records the one real-world number */}
           <motion.g style={{ opacity: outO, y: outY }}>
             <text
               x={O_CONS_CX} y={552} textAnchor="middle"
               fontSize={12} fontFamily="'JetBrains Mono', monospace" fill="#0E7490"
             >
-              Router.set_final_price($3,200) → YES pays $1 / token
+              market::set_final_price($3,200) → YES pays $1 / token
             </text>
           </motion.g>
         </svg>
@@ -1156,7 +1156,7 @@ function OracleScroll() {
           t={t} win={[0.02, 0.05, 0.12, 0.15]} num="A / 06" title="Why not one model"
           foot="“Single AI models are prone to hallucinations, sycophancy, and systematic biases that undermine oracle reliability.”"
         >
-          Resolution is the last manual step in OmniCurve — today the owner types the final
+          Resolution is the last manual step in Continuum — today the owner types the final
           price by hand. The fix isn't a single price feed or a single LLM; it's a panel of
           diverse models, because a lone oracle fails in correlated, invisible ways.
         </Caption>
@@ -1315,7 +1315,7 @@ export default function Docs() {
               </p>
               <ol className="space-y-3.5">
                 {[
-                  'Deposit USDC into the single pool; receive non-transferable LP tokens.',
+                  'Deposit USDC into the single pool; receive non-transferable LP shares.',
                   'Pure collateral underwriting — deposits never shift μ or σ, by construction.',
                   'Earn 1% of every trade across all strikes, pro-rata, claimable anytime.',
                   'After resolution, collateral locked behind losing bets returns to the pool.',
@@ -1349,23 +1349,25 @@ export default function Docs() {
       <section className="max-w-4xl mx-auto px-4 sm:px-6 pt-28 pb-8">
         <SectionHead
           num="11 / Architecture"
-          title="Rust on Stylus, cloned per market"
-          sub="The Gaussian engine would be prohibitively expensive in Solidity. Stylus runs it as WASM for near-zero gas."
+          title="One Move package, a shared object per market"
+          sub="The whole protocol is a single Sui Move package. No proxies, no clones — every market is a shared on-chain object, and the Gaussian engine runs natively for near-zero gas."
         />
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-stretch">
           <Reveal className="md:col-span-2">
             <div className="h-full flex flex-col justify-center space-y-4">
               <p className="font-serif text-[15px] leading-relaxed text-[color:var(--text-muted)]">
-                Contracts are written in <strong className="text-[color:var(--text-primary)]">Rust</strong>,
-                compiled to <strong className="text-[color:var(--text-primary)]">WASM</strong> with the
-                Arbitrum Stylus SDK. Implementations deploy once as singletons; the Factory clones an
-                AMM, a Router, and an LP Token per market via{' '}
-                <strong className="text-[color:var(--text-primary)]">EIP-1167 minimal proxies</strong> and
-                CREATE2 — shared code, independent storage.
+                The contract is one <strong className="text-[color:var(--text-primary)]">Sui Move</strong>{' '}
+                package. The AMM, Router, LP token, and Factory all collapse into a single{' '}
+                <strong className="text-[color:var(--text-primary)]">market</strong> module — Sui has no{' '}
+                <code>msg.sender</code> mappings or delegatecall, so there is nothing to proxy.
               </p>
               <p className="font-serif text-[15px] leading-relaxed text-[color:var(--text-muted)]">
-                The Router prices and executes trades, the AMM holds collateral and recomputes the
-                curve, and the LP Token receipts the underwriters.
+                Each market is a shared{' '}
+                <strong className="text-[color:var(--text-primary)]">Market&lt;T&gt;</strong> object that
+                owns the collateral vault and curve. Bets mint owned{' '}
+                <strong className="text-[color:var(--text-primary)]">Position</strong> objects; LPs are{' '}
+                rows in a <strong className="text-[color:var(--text-primary)]">Table</strong>, non-transferable
+                by construction. Collateral is any <code>Coin&lt;T&gt;</code> — no token wiring, no approvals.
               </p>
             </div>
           </Reveal>
@@ -1374,22 +1376,22 @@ export default function Docs() {
               className="border border-[color:var(--border-dim)] rounded p-5 font-mono text-xs leading-loose text-[color:var(--text-muted)] overflow-x-auto"
               style={{ background: 'var(--bg-surface)' }}
             >
-              <p className="text-[#C8102E]">OmniCurveFactory.create_market()</p>
-              <p className="pl-3">├─ AMM Proxy ──DELEGATECALL──▶ AMM Impl</p>
-              <p className="pl-3">├─ Router Proxy ──DELEGATECALL──▶ Router Impl</p>
-              <p className="pl-3">├─ LP Token Proxy ──DELEGATECALL──▶ LP Impl</p>
-              <p className="pl-3">├─ wires AMM ↔ Router ↔ LP Token ↔ USDC</p>
+              <p className="text-[#C8102E]">continuum::market::create_market&lt;T&gt;()</p>
+              <p className="pl-3">├─ shares a Market&lt;T&gt; object (collateral vault + curve)</p>
+              <p className="pl-3">├─ buy_yes / buy_no ──mint──▶ owned Position objects</p>
+              <p className="pl-3">├─ add_liquidity ──▶ LpAccount rows in Table&lt;address&gt;</p>
+              <p className="pl-3">├─ registers the market in the shared Registry</p>
               <p className="pl-3">└─ ownership → market creator (two-step)</p>
             </div>
           </Reveal>
         </div>
         <Reveal delay={0.2}>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-8 font-mono text-[10px] tracking-[0.15em] uppercase text-[color:var(--text-subtle)]">
-            <span>Arbitrum Stylus</span>
+            <span>Sui Move</span>
             <span className="text-[#C8102E]">·</span>
-            <span>Rust → WASM</span>
+            <span>Shared objects</span>
             <span className="text-[#C8102E]">·</span>
-            <span>EIP-1167 + CREATE2</span>
+            <span>Generic Coin&lt;T&gt; collateral</span>
             <span className="text-[#C8102E]">·</span>
             <span>WAD fixed-point</span>
             <span className="text-[#C8102E]">·</span>
@@ -1415,7 +1417,7 @@ export default function Docs() {
         <SectionHead
           num="12½ / From the paper"
           title="Why a panel, not a feed"
-          sub="The design principles behind the planned oracle — each a one-line claim from the paper, mapped to what it buys OmniCurve."
+          sub="The design principles behind the planned oracle — each a one-line claim from the paper, mapped to what it buys Continuum."
         />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {ORACLE_TENETS.map((tn, i) => (
@@ -1478,7 +1480,7 @@ export default function Docs() {
               Ready to price the future?
             </h2>
             <p className="font-serif italic text-base mt-4 max-w-md mx-auto text-[color:var(--text-muted)] relative">
-              Market #0 is live on Arbitrum Sepolia: “What will ETH price be by the end of 2026?”
+              Continuum is live on Sui testnet — create a market and price any continuous outcome.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center mt-8 relative">
               <Link
