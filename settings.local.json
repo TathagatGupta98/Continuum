@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/tathagat/Continuum status packages/contracts --short)",
+      "Bash(git ls-tree *)",
+      "Bash(rm -rf packages/contracts/src packages/contracts/test packages/contracts/lib packages/contracts/out packages/contracts/cache packages/contracts/temp packages/contracts/Cargo.toml packages/contracts/Cargo.lock packages/contracts/Stylus.toml packages/contracts/rust-toolchain.toml packages/contracts/foundry.toml packages/contracts/.DS_Store)",
+      "Bash(mkdir -p packages/contracts/sources packages/contracts/tests)",
+      "Bash(cp packages_new/contracts/Move.toml      packages/contracts/Move.toml)",
+      "Bash(cp packages_new/contracts/Move.lock      packages/contracts/Move.lock)",
+      "Bash(cp packages_new/contracts/.gitignore     packages/contracts/.gitignore)",
+      "Bash(cd /Users/tathagat/Continuum *)",
+      "Bash(sui move *)",
+      "Bash(sui --version)",
+      "Bash(brew list *)",
+      "Bash(brew info *)",
+      "Bash(brew install *)",
+      "Bash(ls -R packages/types/src)",
+      "Bash(cat packages/types/package.json)",
+      "Bash(rm -f src/webhooks/goldskyHandler.ts src/middlewares/goldskyAuth.ts src/services/indexerService.ts src/db/abis.ts goldsky-amm.json)",
+      "Bash(rmdir src/webhooks)",
+      "Bash(rm -rf ../types/abis ../types/src/../abis)",
+      "Bash(pnpm install *)",
+      "Bash(npx prisma *)",
+      "Bash(DATABASE_URL=\"file:./dev.db\" npx prisma db push --skip-generate)",
+      "Bash(sui client *)",
+      "Bash(sui keytool *)",
+      "Bash(echo \"EXIT=$?\")",
+      "Read(//tmp/**)",
+      "Bash(python3 -)",
+      "Bash(python3 -c \"import datetime; print\\(int\\(datetime.datetime\\(2026,12,31,tzinfo=datetime.timezone.utc\\).timestamp\\(\\)*1000\\)\\)\")",
+      "Bash(PKG=0x8c80c6ea53152d99206fccf8b1fb18a302ea9acf68f19e0fd5664bb0339ac599 *)",
+      "Bash(pnpm start *)",
+      "Bash(curl -s http://localhost:3001/api/health)",
+      "Bash(curl -s http://localhost:3001/api/markets)",
+      "Bash(python3 -m json.tool)",
+      "Bash(grep -rln \"wagmi\\\\|viem\\\\|rainbow\\\\|@omnicurve/types\\\\|arbiscan\\\\|arbitrum\\\\|ammAddress\\\\|routerAddress\\\\|lpTokenAddress\\\\|winningTokenId\\\\|0x\\\\${\" src/)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"EXIT: $?\")"
+    ],
+    "additionalDirectories": [
+      "/Users/tathagat/Continuum/packages/contracts/target",
+      "/tmp"
+    ]
+  }
+}
