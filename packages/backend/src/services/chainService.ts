@@ -17,7 +17,8 @@
 import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';
-import { normalizeSuiAddress } from '@mysten/sui/utils';
+import { normalizeSuiAddress, SUI_CLOCK_OBJECT_ID } from '@mysten/sui/utils';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { config } from '../config';
 import prisma from '../models/db';
 import { broadcastMarketUpdate, broadcastMarketResolved, broadcastMarketCreated } from '../sockets/socketManager';
@@ -115,6 +116,99 @@ export async function getCollateralType(objectId: string): Promise<string> {
   const t = obj.data?.type ?? '';
   const m = t.match(/<(.+)>$/);
   return m?.[1] ?? config.COLLATERAL_TYPE;
+}
+
+/** Scheduled close (`resolves_at`, ms) for a market, or 0 if unreadable. */
+export async function getResolvesAt(objectId: string): Promise<number> {
+  try {
+    const obj = await suiClient.getObject({ id: objectId, options: { showContent: true } });
+    const f: any = (obj.data?.content as any)?.fields;
+    return f?.resolves_at ? Number(f.resolves_at) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// ─── Settlement submission (oracle signing path) ─────────────────────────────
+
+/** Convert a signed JS float to the contract's `Fp` parts (WAD magnitude + sign). */
+function floatToWadParts(value: number): { mag: bigint; neg: boolean } {
+  const neg = value < 0;
+  const abs = Math.abs(value);
+  // Decimal string with 18 fractional digits, avoiding float exponent notation.
+  const fixed = abs.toFixed(18); // e.g. "6699.990000000000000000"
+  const [intPart = '0', fracPart = ''] = fixed.split('.');
+  const frac = (fracPart + '0'.repeat(18)).slice(0, 18);
+  const mag = BigInt(intPart + frac);
+  return { mag, neg: neg && mag !== 0n };
+}
+
+/** The oracle's owner keypair (lazily built from ORACLE_SIGNER_KEY). */
+let oracleSigner: Ed25519Keypair | null = null;
+function getOracleSigner(): Ed25519Keypair {
+  if (!config.ORACLE_SIGNER_KEY) {
+    throw new Error('ORACLE_SIGNER_KEY is not set; cannot sign set_final_price');
+  }
+  if (!oracleSigner) {
+    // Accepts a Sui bech32 secret key (`suiprivkey1...`).
+    oracleSigner = Ed25519Keypair.fromSecretKey(config.ORACLE_SIGNER_KEY);
+  }
+  return oracleSigner;
+}
+
+/** Address the oracle will sign settlement transactions from. */
+export function oracleSignerAddress(): string {
+  return getOracleSigner().getPublicKey().toSuiAddress();
+}
+
+/**
+ * Submit the AI-derived settlement value on-chain via `market::set_final_price`.
+ * Owner-only and gated on `now >= resolves_at` by the contract — the signer must
+ * be the market owner. Returns the transaction digest; the event poller then
+ * picks up `MarketResolved` and writes `finalPrice` to the DB.
+ */
+export async function submitFinalPrice(params: {
+  objectId: string;
+  collateralType: string;
+  value: number;
+}): Promise<string> {
+  const { objectId, collateralType, value } = params;
+  const signer = getOracleSigner();
+  const signerAddr = signer.getPublicKey().toSuiAddress();
+
+  // Preflight: the contract aborts (EUnauthorized) unless the sender is the owner.
+  const owner = await getMarketOwner(objectId);
+  if (normalizeSuiAddress(owner) !== normalizeSuiAddress(signerAddr)) {
+    throw new Error(
+      `oracle signer ${signerAddr} is not the market owner ${owner}; cannot settle`,
+    );
+  }
+
+  const { mag, neg } = floatToWadParts(value);
+
+  const tx = new Transaction();
+  tx.moveCall({
+    target: `${PKG}::${MODULE}::set_final_price`,
+    typeArguments: [collateralType],
+    arguments: [
+      tx.object(objectId),
+      tx.pure.u256(mag),
+      tx.pure.bool(neg),
+      tx.object(SUI_CLOCK_OBJECT_ID),
+    ],
+  });
+
+  const res = await suiClient.signAndExecuteTransaction({
+    signer,
+    transaction: tx,
+    options: { showEffects: true },
+  });
+
+  const status = res.effects?.status?.status;
+  if (status !== 'success') {
+    throw new Error(`set_final_price failed: ${res.effects?.status?.error ?? 'unknown'}`);
+  }
+  return res.digest;
 }
 
 // ─── devInspect view-function calls (per-LP figures) ─────────────────────────
