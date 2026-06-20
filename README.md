@@ -25,13 +25,13 @@ The core of **Continuum** translates the continuous Gaussian distribution into a
 
 ## Addresses (Sui Testnet)
 
-`Package:` [0x8c80c6ea53152d99206fccf8b1fb18a302ea9acf68f19e0fd5664bb0339ac599](https://suiscan.xyz/testnet/object/0x8c80c6ea53152d99206fccf8b1fb18a302ea9acf68f19e0fd5664bb0339ac599)
+`Package:` [0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549](https://suiscan.xyz/testnet/object/0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549)
 
-`Registry (shared):` [0x2080474707e00e222decf87a8a544a9bcfbe3295facaf39bc6bc900887609e1c](https://suiscan.xyz/testnet/object/0x2080474707e00e222decf87a8a544a9bcfbe3295facaf39bc6bc900887609e1c)
+`Registry (shared):` [0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23](https://suiscan.xyz/testnet/object/0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23)
 
-`Market #0 {BTC price @ 2026} (shared):` [0x842e2475ad0cb15a09aa6f33e4ddad03360604f7e9727869d97f8a9420b9e488](https://suiscan.xyz/testnet/object/0x842e2475ad0cb15a09aa6f33e4ddad03360604f7e9727869d97f8a9420b9e488)
+`Market #0 {BTC price @ 2026} (shared):` [0x77550db6ff83d512ca2763d8af9d6aaee13ba8364e5c83755d66d446a90ea0dc](https://suiscan.xyz/testnet/object/0x77550db6ff83d512ca2763d8af9d6aaee13ba8364e5c83755d66d446a90ea0dc)
 
-`Collateral type:` `0x8c80c6ea53152d99206fccf8b1fb18a302ea9acf68f19e0fd5664bb0339ac599::mock_usdc::MOCK_USDC`
+`Collateral type:` `0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549::mock_usdc::MOCK_USDC`
 
 ## Table of Contents
 
@@ -448,11 +448,11 @@ sui client call --package $PACKAGE_ID --module market --function create_market \
 
 | Object | Id |
 |--------|----|
-| Package | `0x8c80c6ea53152d99206fccf8b1fb18a302ea9acf68f19e0fd5664bb0339ac599` |
-| Registry (shared) | `0x2080474707e00e222decf87a8a544a9bcfbe3295facaf39bc6bc900887609e1c` |
-| Market #0 (shared) | `0x842e2475ad0cb15a09aa6f33e4ddad03360604f7e9727869d97f8a9420b9e488` |
-| TreasuryCap\<MOCK_USDC\> | `0x1e412f3d70965e255d7d499751404c6d9e13603708eb6912518871a627ea0e1e` |
-| Collateral type | `0x8c80c6...::mock_usdc::MOCK_USDC` |
+| Package | `0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549` |
+| Registry (shared) | `0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23` |
+| Market #0 (shared) | `0x77550db6ff83d512ca2763d8af9d6aaee13ba8364e5c83755d66d446a90ea0dc` |
+| TreasuryCap\<MOCK_USDC\> | `0x8029f5ce4f72340d8ac3dc1ae0aee28b749cdf763ea3ee06023ec2db95d7923d` |
+| Collateral type | `0x76ab32...::mock_usdc::MOCK_USDC` |
 
 ---
 

@@ -13,16 +13,17 @@
 > frontend architecture reference.
 >
 > **Live testnet deployment (Sui):**
-> - `PACKAGE_ID` = `0x8c80c6ea53152d99206fccf8b1fb18a302ea9acf68f19e0fd5664bb0339ac599`
-> - `REGISTRY_ID` (shared) = `0x2080474707e00e222decf87a8a544a9bcfbe3295facaf39bc6bc900887609e1c`
-> - `Market #0` (shared) = `0x842e2475ad0cb15a09aa6f33e4ddad03360604f7e9727869d97f8a9420b9e488`
-> - `TreasuryCap<MOCK_USDC>` (owned) = `0x1e412f3d70965e255d7d499751404c6d9e13603708eb6912518871a627ea0e1e`
-> - `COLLATERAL_TYPE` = `0x8c80c6...::mock_usdc::MOCK_USDC`
+> - `PACKAGE_ID` = `0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549`
+> - `REGISTRY_ID` (shared) = `0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23`
+> - `Market #0` (shared) = `0x77550db6ff83d512ca2763d8af9d6aaee13ba8364e5c83755d66d446a90ea0dc`
+> - `TreasuryCap<MOCK_USDC>` (owned) = `0x8029f5ce4f72340d8ac3dc1ae0aee28b749cdf763ea3ee06023ec2db95d7923d`
+> - `COLLATERAL_TYPE` = `0x76ab32...::mock_usdc::MOCK_USDC`
 >
 > **Backend env (Sui):** `SUI_RPC_URL`, `PACKAGE_ID`, `REGISTRY_ID`, `COLLATERAL_TYPE`
-> (replaces the old `RPC_URL` + `FACTORY/AMM/ROUTER/USDC` addresses). Markets are keyed by
-> the shared `Market<T>` **object id** (Prisma `Market.objectId`), not three EVM proxies;
-> settlement is recorded as a per-position `finalPrice` (Prisma `Market.finalPrice`).
+> (replaces the old `RPC_URL` + `FACTORY/AMM/ROUTER/USDC` addresses), plus the Pyth settlement
+> ids `PYTH_STATE_ID` / `WORMHOLE_STATE_ID` / `HERMES_ENDPOINT` (testnet defaults baked in).
+> Markets are keyed by the shared `Market<T>` **object id** (Prisma `Market.objectId`), not three
+> EVM proxies; settlement is recorded as a per-position `finalPrice` (Prisma `Market.finalPrice`).
 >
 > **AI oracle (added 2026-06-20):** a **multi-agent LLM settlement oracle** now lives in the
 > backend (`packages/backend/src/services/oracle/`), based on Kota, *Multi-Agent AI Oracle
@@ -36,6 +37,14 @@
 > `groq/compound-mini` (built-in web search). It is **gated off by default**
 > (`ORACLE_ENABLED=false`); see *AI Oracle (settlement layer)* below. This is the backend that
 > *drives* the existing manual on-chain resolution entry points — the contracts are unchanged.
+>
+> **Pyth oracle (added 2026-06-20):** financial markets now settle **trustlessly on-chain** via a
+> new Move entry point `market::resolve_with_pyth`, which reads a bound **Pyth Network** price feed
+> (`PriceInfoObject`) on Sui — no trusted submitter. Markets carry an optional immutable 32-byte
+> `price_feed_id` (set in `create_market`). The backend resolution keeper routes price-feed markets
+> to Pyth and leaves non-price markets to the AI oracle. Move deps `Pyth` + `Wormhole` are added to
+> `contracts/Move.toml`. See *Pyth oracle (on-chain settlement)* below. Unlike the AI oracle this
+> **changes the contracts** (one new function + one field).
 
 ## What is Continuum?
 
@@ -75,6 +84,7 @@ Where μ (mu) is the market's expected value (mean) and σ (sigma) is the market
 | Monorepo | pnpm workspaces (JS packages) + a standalone Move package |
 | Backend API | Node.js, TypeScript, Express 5, Socket.io, `@mysten/sui` |
 | AI oracle | `groq-sdk` → **GroqCloud** — multi-agent LLM ensemble (Llama/GPT-OSS sub-agents) for settlement (arXiv 2605.30802) |
+| Price oracle | **Pyth Network** pull oracle on Sui (`Pyth`/`Wormhole` Move deps; `@pythnetwork/pyth-sui-js` + Hermes) — trustless on-chain settlement for financial markets |
 | Database | Prisma ORM (SQLite for local dev, PostgreSQL in production) |
 | Indexer | Sui event poller — RPC polling of the package's Move events via `@mysten/sui` |
 | Frontend | React + TypeScript + Vite + Tailwind + d3 — wallet/tx layer on `@mysten/dapp-kit` + `@mysten/sui` (PTBs) |
@@ -188,9 +198,12 @@ module scales them to WAD internally (`× 1e12`, constant `USDC_SCALE`).
 - `proposed_final_price`, `resolution_time: u64` — two-phase 24h timelock state.
 
 **Entry / public functions:**
-- `create_market<T>(registry, title, sigma_min_mag, resolves_at, ctx)` — **permissionless**;
-  shares a new `Market<T>`. `resolves_at` (ms, `Clock` time) is mandatory and must be `> 0`;
-  it gates every resolution path and is fixed for the market's lifetime.
+- `create_market<T>(registry, title, sigma_min_mag, resolves_at, price_feed_id, ctx)` —
+  **permissionless**; shares a new `Market<T>`. `resolves_at` (ms, `Clock` time) is mandatory and
+  must be `> 0`; it gates every resolution path and is fixed for the market's lifetime.
+  `price_feed_id` is an optional 32-byte Pyth feed id (empty = manual-only market); when set the
+  market can settle trustlessly via `resolve_with_pyth`. Both `resolves_at` and `price_feed_id`
+  are fixed at creation so the settlement source can't be swapped under open positions.
 - `transfer_ownership<T>` / `accept_ownership<T>` — two-step ownership transfer.
 - `set_distribution<T>(market, mu_mag, mu_neg, sigma_mag, ctx)` — owner, pre-trading: seed the
   prior μ/σ and the stake-weighted accumulators with `prior_weight` of virtual stake.
@@ -209,6 +222,13 @@ module scales them to WAD internally (`× 1e12`, constant `USDC_SCALE`).
   the real-world outcome. Requires `now ≥ resolves_at`.
 - `propose_resolution` → `execute_resolution` (with `cancel_resolution`) — two-phase 24h
   timelock path; both honor `resolves_at` and the dispute window via `&Clock`.
+- `resolve_with_pyth<T>(market, price_info_object, &Clock, ctx)` — **permissionless** trustless
+  settlement for financial markets. Reads the market's bound Pyth `PriceInfoObject` (asserts its
+  on-chain identifier matches `price_feed_id`), converts the Pyth price `(price · 10^expo)` to the
+  signed-WAD `final_price`, and resolves — no trusted submitter. Requires `now ≥ resolves_at` and
+  a fresh feed (`MAX_PRICE_AGE_SECS = 60`); Pyth being a *pull* oracle, the caller must refresh the
+  feed (`pyth::update_single_price_feed`) in the same PTB. Internal helpers: `pyth_price_to_fp`
+  (Pyth `Price` → `Fp`), `pyth_i64_magnitude`, `pow10`.
 - `claim_winnings<T>(market, position, ctx)` — redeem a winning `Position` for collateral
   (1 USDC/token); consumes the object. YES wins iff `final_price ≥ strike`, NO iff `< strike`.
 - `release_losing_collateral<T>(market, target_mag, target_neg, is_yes, ctx)` — permissionless;
@@ -256,16 +276,19 @@ A minimal 6-decimal mock USDC for local testing and a concrete `T` to instantiat
 
 ## Typical lifecycle (PTBs / TS SDK)
 
-1. `market::create_market<USDC>(registry, title, sigma_min, resolves_at)` — anyone; shares a
-   `Market<USDC>`. `resolves_at` is the mandatory scheduled close (`Clock` ms, `> 0`).
+1. `market::create_market<USDC>(registry, title, sigma_min, resolves_at, price_feed_id)` — anyone;
+   shares a `Market<USDC>`. `resolves_at` is the mandatory scheduled close (`Clock` ms, `> 0`);
+   `price_feed_id` is an optional 32-byte Pyth feed id (empty = manual market).
 2. `market::set_distribution(market, mu_mag, mu_neg, sigma_mag)` — owner, pre-trading; seeds the
    prior μ/σ. (Also pre-trading: `set_prior_weight`. `set_sigma_min` retunable any time.)
 3. `market::add_liquidity(market, coin)` — deposit collateral, receive LP shares (curve-neutral).
 4. `market::buy_yes / buy_no(market, coin, target_mag, target_neg)` — trade; mints a `Position`.
-5. Resolve (both paths refuse to start before `resolves_at`, checked via `&Clock`):
-   - immediate: `market::set_final_price(market, price_mag, price_neg, &Clock)` — owner.
-   - two-phase (24h timelock): `propose_resolution(…, &Clock)` → `execute_resolution(market, &Clock)`,
-     with `cancel_resolution` during the window.
+5. Resolve (all paths refuse to start before `resolves_at`, checked via `&Clock`):
+   - **Pyth (trustless, price markets):** refresh the bound feed then
+     `market::resolve_with_pyth(market, price_info_object, &Clock)` — permissionless.
+   - manual immediate: `market::set_final_price(market, price_mag, price_neg, &Clock)` — owner.
+   - manual two-phase (24h timelock): `propose_resolution(…, &Clock)` → `execute_resolution(market,
+     &Clock)`, with `cancel_resolution` during the window.
 6. `market::claim_winnings(market, position)` — redeem a winning `Position` for collateral.
 7. `market::release_losing_collateral(market, …)` — permissionless; frees LP capital.
 8. Admin: `transfer_ownership`/`accept_ownership`, `claim_fees`, `remove_liquidity`, `sweep_dust`.
@@ -340,9 +363,12 @@ Single TypeScript stack — Express 5 + Socket.io + Prisma + `@mysten/sui`.
   Groq's agentic `groq/compound-mini` web search; exports the shared `groqClient`), `resolverService.ts`
   (independent Groq ensemble — one sub-agent per `ORACLE_MODELS` id, JSON-object output with a balanced-`{…}` fallback parser),
   `aggregationService.ts` (confidence-weighted aggregate + agreement + escalation score),
-  `oracleService.ts` (orchestrator + keeper worker), `types.ts` (local copy of the shared oracle
+  `oracleService.ts` (orchestrator + keeper worker — routes Pyth-bound markets to
+  `resolveViaPyth`, others to the AI ensemble), `types.ts` (local copy of the shared oracle
   shapes). `chainService.ts` also gained the **signing path** (`submitFinalPrice`, `getResolvesAt`,
-  `oracleSignerAddress`). See *AI Oracle (settlement layer)*.
+  `oracleSignerAddress`) and the **Pyth path** (`resolveWithPyth`, `getPriceFeedId`, via
+  `@pythnetwork/pyth-sui-js`). See *AI Oracle (settlement layer)* and *Pyth oracle (on-chain
+  settlement)*.
 
 ### Database (Prisma; SQLite local / PostgreSQL prod)
 Models `User`, `Market`, `Position`, `OracleResolution` (+ `OracleStatus` enum) — the schema is
@@ -400,6 +426,62 @@ per-agent failure the aggregator tolerates (it drops the vote, quorum is ≥2). 
 imports (TS6059). Still TODO: a KalshiBench-style eval harness to calibrate thresholds, and a live
 end-to-end run.
 
+### Pyth oracle (on-chain settlement) *(added 2026-06-20)*
+A **trustless, on-chain** settlement path for financial markets, using the **Pyth Network** pull
+oracle on Sui. This is a Move-level change (one new entry function), not a new service: it closes
+the "no on-chain oracle" gap directly in the resolution path. Pyth handles price markets; the AI
+oracle is the layer for non-price markets (news, sports, …).
+
+**Contracts (`market.move`).** Markets carry an optional immutable 32-byte `price_feed_id` (set in
+`create_market`, empty = manual market). `resolve_with_pyth<T>(market, price_info_object, &Clock,
+ctx)` is **permissionless**: once `resolves_at` has passed, anyone may settle by reading the bound
+Pyth feed — it asserts the supplied `PriceInfoObject`'s on-chain identifier equals `price_feed_id`
+(so BTC can't be settled against the ETH feed), reads a fresh price
+(`pyth::get_price_no_older_than`, `MAX_PRICE_AGE_SECS = 60`), converts Pyth's signed
+`(price · 10^expo)` to the signed-WAD `final_price` (`pyth_price_to_fp`), and emits `MarketResolved`.
+Per-position settlement (`claim_winnings` / `release_losing_collateral`) is unchanged. Move deps:
+`Pyth` (`sui-contract-testnet`) + `Wormhole` (`sui/testnet`) in `Move.toml`, with `override = true`
+on the Sui framework dep so all three share one framework rev. Unit tests cover the price→WAD
+conversion (`pyth_price_to_fp_for_testing`) for positive and negative prices.
+
+**Backend.** `chainService.resolveWithPyth({objectId, collateralType, feedId})` uses
+`@pythnetwork/pyth-sui-js` (`SuiPriceServiceConnection` → Hermes, `SuiPythClient.updatePriceFeeds`)
+to build one PTB that refreshes the feed *and* calls `resolve_with_pyth` atomically (so the
+staleness check always passes); `getPriceFeedId(objectId)` reads the bound feed. The resolution
+keeper (`oracleService.scanOnce`) routes each closed market by settlement source: a market with a
+`price_feed_id` → `resolveViaPyth` (records a `SUBMITTED`/`FAILED` `OracleResolution` audit row,
+`agentVotesJson = [{model:'pyth-network', feedId}]`); otherwise → the AI ensemble. The keeper now
+starts when `ORACLE_ENABLED` **or** Pyth is active (`PYTH_RESOLUTION_ENABLED` + `ORACLE_SIGNER_KEY`,
+which signs gas for the permissionless call). Env (`config.ts`): `PYTH_RESOLUTION_ENABLED` (default
+true), `PYTH_STATE_ID`, `WORMHOLE_STATE_ID`, `HERMES_ENDPOINT` (testnet defaults baked in).
+
+> **Dependency note:** `@pythnetwork/pyth-sui-js` bundles `@mysten/sui ^1.3.0`, which pnpm resolved
+> to a *separate* copy (1.38.0) from the backend's 1.45.2 — causing `Transaction`/`SuiClient`
+> type-identity errors. Fixed with a scoped root `pnpm.overrides` entry
+> (`@pythnetwork/pyth-sui-js>@mysten/sui: 1.45.2`) so the SDK shares the backend's version; the
+> frontend's dapp-kit-pinned 1.38.0 is untouched.
+
+**Shared types / frontend.** `packages/types` exports `PYTH_TESTNET` / `PYTH_MAINNET` configs,
+`PYTH_FEED_IDS` (**beta/testnet** ids — what the live deployment uses) and `PYTH_FEED_IDS_MAINNET`.
+`useCreateMarket` takes an optional `priceFeedId`; the `CreateMarketModal` has a "Pyth Price Feed"
+dropdown that binds a feed at creation.
+
+> **Beta channel (testnet) — critical.** Sui **testnet** Pyth/Wormhole run a *different Wormhole
+> guardian set* than mainnet, so price updates must come from the **beta Hermes**
+> (`https://hermes-beta.pyth.network`), and testnet feed ids **differ from mainnet** (e.g. testnet
+> BTC/USD = `0xf9c0172b…ea31b`, not the mainnet `0xe62df6c8…415b43`). Using the mainnet Hermes on
+> testnet aborts in Wormhole VAA verification (`dynamic_field::borrow_child_object`, guardian-set
+> lookup). `HERMES_ENDPOINT` + `PYTH_FEED_IDS` default to beta accordingly; a mainnet deployment
+> must switch both to the mainnet values.
+
+**Verified end-to-end on testnet (2026-06-20).** `resolve_with_pyth` settled live BTC/USD on-chain
+twice: via the SDK directly (final_price ≈ $63,761.99, tx `9x8tvNTW…`) and via the **shipped backend
+code path** `chainService.resolveWithPyth` (final_price ≈ $63,779.06, tx `CBy9CYff…`). The keeper is
+wired (`ORACLE_SIGNER_KEY` set to the owner key) so price markets auto-settle after close.
+
+**Still TODO:** a frontend "Resolve via Pyth" button (the backend keeper covers automated
+settlement today).
+
 ---
 
 ## Known Issues & Gaps
@@ -415,18 +497,21 @@ end-to-end run.
 ### Carried over from the protocol design (not bugs in the Move port)
 - **No slippage protection**: trades have no max-cost parameter.
 - **1% fee hardcoded**: no governance or per-market configuration.
-- **Oracle integration**: the **on-chain** resolution entry points are still manual
-  (`set_final_price` / two-phase) — the contracts have no oracle. Off-chain, the backend now has a
-  multi-agent **AI oracle** that can drive `set_final_price` automatically (see *AI Oracle
-  (settlement layer)*); it's gated off by default and, when enabled, escalates low-confidence /
-  split cases to human arbitration rather than auto-settling them.
+- **Oracle integration**: now two layers. **Financial markets settle trustlessly on-chain** via
+  `market::resolve_with_pyth`, which reads a bound **Pyth** price feed (no trusted submitter) — see
+  *Pyth oracle (on-chain settlement)*. **Non-price markets** (news, sports, …) still resolve
+  through the manual `set_final_price` / two-phase entry points, optionally driven off-chain by the
+  multi-agent **AI oracle** (see *AI Oracle (settlement layer)*; gated off by default, escalates
+  low-confidence / split cases to human arbitration). The backend resolution keeper routes each
+  closed market by settlement source: Pyth-bound → `resolve_with_pyth`, otherwise → AI oracle.
 - **Manual title metadata**: `MarketCreated` carries the on-chain `title`, but any richer
   off-chain metadata (category, description) is still DB-side.
 
 ### Improvements the Move port already bakes in vs. the old Stylus binary
 - **`claim_fees` WAD→USDC conversion** is correct in Move (`fp::mag(pending) / USDC_SCALE`).
 - **No raw-byte revert decoding needed** — Move uses typed `abort` codes (see the `E*` consts
-  in `market.move`; e.g. `ETimelockActive = 17`, `EMarketNotClosed = 18`).
+  in `market.move`; e.g. `ETimelockActive = 17`, `EMarketNotClosed = 18`, `ENoPriceFeed = 20`,
+  `EWrongPriceFeed = 21`).
 - **No proxy/getter gaps** — every field has a public view; nothing is hidden behind a missing
   ABI export.
 
