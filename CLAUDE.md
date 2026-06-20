@@ -21,6 +21,15 @@
 > (replaces the old `RPC_URL` + `FACTORY/AMM/ROUTER/USDC` addresses). Markets are keyed by
 > the shared `Market<T>` **object id** (Prisma `Market.objectId`), not three EVM proxies;
 > settlement is recorded as a per-position `finalPrice` (Prisma `Market.finalPrice`).
+>
+> **AI oracle (added 2026-06-20):** a **multi-agent LLM settlement oracle** now lives in the
+> backend (`packages/backend/src/services/oracle/`), based on Kota, *Multi-Agent AI Oracle
+> Systems for Prediction Market Resolution* (arXiv 2605.30802). It gathers a shared evidence
+> packet, runs an **independent Claude ensemble** over it, **confidence-weighted aggregates**
+> the result, and either **auto-submits `set_final_price`** on-chain or **escalates to human
+> arbitration**. It is **gated off by default** (`ORACLE_ENABLED=false`); see *AI Oracle
+> (settlement layer)* below. This is the backend that *drives* the existing manual on-chain
+> resolution entry points — the contracts are unchanged.
 
 ## What is Continuum?
 
@@ -59,6 +68,7 @@ Where μ (mu) is the market's expected value (mean) and σ (sigma) is the market
 | Smart Contracts | **Sui Move** (`edition = 2024.beta`), Sui framework (`framework/testnet`) — one `continuum` package |
 | Monorepo | pnpm workspaces (JS packages) + a standalone Move package |
 | Backend API | Node.js, TypeScript, Express 5, Socket.io, `@mysten/sui` |
+| AI oracle | `@anthropic-ai/sdk` — multi-agent Claude ensemble for settlement (arXiv 2605.30802) |
 | Database | Prisma ORM (SQLite for local dev, PostgreSQL in production) |
 | Indexer | Sui event poller — RPC polling of the package's Move events via `@mysten/sui` |
 | Frontend *(migration pending)* | React + TypeScript + Vite + Tailwind + d3 — wallet/tx layer to move from Wagmi/Viem to `@mysten/dapp-kit` + `@mysten/sui` |
@@ -301,6 +311,9 @@ Single TypeScript stack — Express 5 + Socket.io + Prisma + `@mysten/sui`.
 | GET | `/api/markets/:id/lp-stats?address=` | LP balance, accFeePerShare, pending rewards |
 | POST | `/api/markets/:id/settle` | Owner-only: returns `winning_token_id` |
 | GET | `/api/users/:address/portfolio` | All positions + current value for a wallet |
+| GET | `/api/oracle/escalations` | AI-oracle human-arbitration queue (`ESCALATED` + `FAILED`) |
+| GET | `/api/oracle/:marketId` | One market's oracle resolution (votes, evidence, score, status) |
+| POST | `/api/oracle/:marketId/resolve` | Manually trigger / re-run the AI oracle pipeline |
 | GET | `/api/docs` | OpenAPI-style JSON schema |
 
 > The old `POST /api/webhooks/goldsky` route and the Goldsky HMAC middleware (EVM-indexer
@@ -317,11 +330,57 @@ Single TypeScript stack — Express 5 + Socket.io + Prisma + `@mysten/sui`.
 - **`indexerService.ts`** — Sui event ingester (poller); reconciles DB state from chain events.
 - **`mathService.ts`** — Gaussian CDF via jStat for off-chain price preview; the math is identical
   to `gaussian.move`.
+- **`oracle/` (AI settlement oracle)** — `retrievalService.ts` (shared, date-filtered evidence via
+  Claude `web_search`), `resolverService.ts` (independent Claude ensemble, scalar JSON-schema
+  output), `aggregationService.ts` (confidence-weighted aggregate + agreement + escalation score),
+  `oracleService.ts` (orchestrator + keeper worker), `types.ts` (local copy of the shared oracle
+  shapes). `chainService.ts` also gained the **signing path** (`submitFinalPrice`, `getResolvesAt`,
+  `oracleSignerAddress`). See *AI Oracle (settlement layer)*.
 
 ### Database (Prisma; SQLite local / PostgreSQL prod)
-Models `User`, `Market`, `Position` — the schema is largely chain-agnostic. `Market.objectId` is
-the shared `Market<T>` object id (replacing the three EVM proxy addresses); positions are Sui
-object ids; settlement is recorded as `Market.finalPrice`.
+Models `User`, `Market`, `Position`, `OracleResolution` (+ `OracleStatus` enum) — the schema is
+largely chain-agnostic. `Market.objectId` is the shared `Market<T>` object id (replacing the three
+EVM proxy addresses); positions are Sui object ids; settlement is recorded as `Market.finalPrice`.
+`OracleResolution` (one row per market, `Market.oracleResolution`) is the AI-oracle audit row:
+`status`, `aggregatedValue`/`medianValue`, `meanConfidence`, `agreement`, `compositeScore`,
+`agentVotesJson`, `evidenceJson`, `txDigest`.
+
+### AI Oracle (settlement layer) *(added 2026-06-20)*
+A multi-agent LLM oracle that derives a market's settlement value, ported from Kota,
+*Multi-Agent AI Oracle Systems for Prediction Market Resolution* (arXiv 2605.30802). It implements
+the paper's winning **Architecture A (independent aggregation)** and its **agreement-based
+escalation** — deliberation/debate is deliberately *not* used (the paper shows it degrades accuracy
+via persuasive error propagation).
+
+**Locked design decisions:**
+1. **Scalar estimation** — Continuum settles to one `finalPrice`, so each agent estimates the
+   real-world value at `resolves_at` (signed, market units); the aggregate maps directly to
+   `market::set_final_price`. (Not per-strike binary like the paper.)
+2. **Claude-only ensemble** — distinct tiers (`claude-opus-4-8` + `claude-sonnet-4-6` +
+   `claude-haiku-4-5`) to decorrelate errors within one vendor; the paper's caveat is that
+   same-vendor ensembles have higher error correlation, so escalation thresholds are kept strict.
+3. **Immediate `set_final_price`** on auto-resolve (no two-phase timelock) — irreversible, hence
+   strict thresholds + the escalation safety net.
+
+**Flow (keeper/poller-driven):** Sui emits no event when `resolves_at` is crossed, so a worker
+(`startResolutionWorker`, off unless `ORACLE_ENABLED=true`) scans DB markets for ones past
+`resolves_at`, not resolved on-chain, with no prior attempt → gather shared evidence → run the
+ensemble in parallel → confidence-weighted aggregate → if agents agree within tolerance **and**
+mean confidence ≥ `ORACLE_CONFIDENCE_THRESHOLD` (0.91) → `AUTO_RESOLVED`; else `ESCALATED` to a
+human; zero usable estimates → `FAILED`. `compositeScore = 1[agreement] + meanConfidence`. When
+`ORACLE_AUTO_SUBMIT=true`, an `AUTO_RESOLVED` decision is signed on-chain (`ORACLE_SIGNER_KEY`,
+must be the market owner) → `SUBMITTED`; the event poller then writes `Market.finalPrice` from
+`MarketResolved`, and bettor positions settle per-position via `claim_winnings` as usual.
+
+**Env (all in `config.ts`/`.env`, oracle off by default):** `ORACLE_ENABLED`, `ANTHROPIC_API_KEY`,
+`ORACLE_MODELS`, `ORACLE_POLL_INTERVAL_MS`, `ORACLE_CONFIDENCE_THRESHOLD`,
+`ORACLE_AGREEMENT_TOLERANCE`, `ORACLE_AUTO_SUBMIT`, `ORACLE_SIGNER_KEY`, `ORACLE_MAX_SOURCES`.
+
+**Notes / constraints:** the resolver uses a **raw JSON-schema** structured output (the SDK's
+`zodOutputFormat` helper needs zod v4; the backend is on zod v3). Oracle types are mirrored in
+`packages/types` but the backend uses a **local `oracle/types.ts`** because its tsconfig
+`rootDir: ./src` rejects cross-package source imports (TS6059). Still TODO: a KalshiBench-style
+eval harness to calibrate thresholds, and a live end-to-end run.
 
 ---
 
@@ -339,7 +398,11 @@ object ids; settlement is recorded as `Market.finalPrice`.
 ### Carried over from the protocol design (not bugs in the Move port)
 - **No slippage protection**: trades have no max-cost parameter.
 - **1% fee hardcoded**: no governance or per-market configuration.
-- **Oracle integration**: resolution is fully manual (`set_final_price` / two-phase). No oracle.
+- **Oracle integration**: the **on-chain** resolution entry points are still manual
+  (`set_final_price` / two-phase) — the contracts have no oracle. Off-chain, the backend now has a
+  multi-agent **AI oracle** that can drive `set_final_price` automatically (see *AI Oracle
+  (settlement layer)*); it's gated off by default and, when enabled, escalates low-confidence /
+  split cases to human arbitration rather than auto-settling them.
 - **Manual title metadata**: `MarketCreated` carries the on-chain `title`, but any richer
   off-chain metadata (category, description) is still DB-side.
 
