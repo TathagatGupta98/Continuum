@@ -7,10 +7,12 @@ import healthRoutes from './routes/health';
 import marketRoutes from './routes/marketRoutes';
 import userRoutes from './routes/userRoutes';
 import apiDocsRoutes from './routes/apiDocs';
+import oracleRoutes from './routes/oracleRoutes';
 import { errorHandler } from './middlewares/errorHandler';
 import { apiLimiter } from './middlewares/rateLimiter';
 import { initializeSocket } from './sockets/socketManager';
 import { startChainWatcher } from './services/chainService';
+import { startResolutionWorker } from './services/oracle/oracleService';
 
 const app = express();
 
@@ -45,6 +47,7 @@ app.use('/api', apiLimiter);
 app.use('/api', healthRoutes);
 app.use('/api/markets', marketRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/oracle', oracleRoutes);
 app.use('/api/docs', apiDocsRoutes);
 
 // Global Error Handler
@@ -62,12 +65,16 @@ httpServer.listen(config.PORT, () => {
   // Start the on-chain event watcher
   startChainWatcher()
     .then((fns) => {
-      unwatchers = fns;
+      unwatchers.push(...fns);
       console.log('⛓️  Chain watcher started successfully');
     })
     .catch((err) => {
       console.error('⚠️  Chain watcher failed to start:', err);
     });
+
+  // Start the AI oracle resolution worker (no-op unless ORACLE_ENABLED=true).
+  const stopOracle = startResolutionWorker();
+  unwatchers.push(stopOracle);
 });
 
 // Graceful shutdown

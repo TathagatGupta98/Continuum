@@ -14,7 +14,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../../config';
-import type { EvidencePacket, EvidenceSource } from '@omnicurve/types';
+import type { EvidencePacket, EvidenceSource } from './types';
 
 // Retrieval uses the strongest model for query formulation + synthesis. The
 // _20260209 web_search variant (dynamic filtering) requires Opus 4.6+/Sonnet 4.6.

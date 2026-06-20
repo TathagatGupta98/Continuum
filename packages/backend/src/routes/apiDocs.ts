@@ -128,6 +128,44 @@ router.get('/', (req: Request, res: Response) => {
           },
         },
       },
+      {
+        path: '/api/oracle/escalations',
+        method: 'GET',
+        description: 'Human-arbitration queue: oracle resolutions the ensemble could not auto-resolve (ESCALATED) plus pipeline failures (FAILED).',
+        response: {
+          success: true,
+          count: 'number',
+          data: '[OracleResolution]  // status, aggregatedValue, meanConfidence, agreement, compositeScore, votes, evidence',
+        },
+      },
+      {
+        path: '/api/oracle/:marketId',
+        method: 'GET',
+        description: "A market's multi-agent oracle resolution: per-agent votes, shared evidence packet, confidence-weighted aggregate, agreement + composite escalation score, status, and tx digest.",
+        params: { marketId: { type: 'string', required: true, description: 'Market ID' } },
+        response: {
+          success: true,
+          data: {
+            marketId: 'string',
+            status: 'PENDING | AUTO_RESOLVED | ESCALATED | SUBMITTED | FAILED',
+            aggregatedValue: 'number | null  (confidence-weighted settlement value)',
+            medianValue: 'number | null',
+            meanConfidence: 'number (0..1)',
+            agreement: 'boolean',
+            compositeScore: 'number (1[agreement] + meanConfidence, 0..2)',
+            votes: '[{ model, value, confidence, reasoning, latencyMs, error? }]',
+            evidence: '{ question, query, retrievedAt, resolvesAt, sources, summary }',
+            txDigest: 'string | null',
+          },
+        },
+      },
+      {
+        path: '/api/oracle/:marketId/resolve',
+        method: 'POST',
+        description: 'Manually trigger (or re-run) the AI oracle pipeline for a market — gather shared evidence, run the independent Claude ensemble, aggregate, and (if ORACLE_AUTO_SUBMIT) submit set_final_price on-chain.',
+        params: { marketId: { type: 'string', required: true, description: 'Market ID' } },
+        response: { success: true, data: 'OracleDecision' },
+      },
     ],
     socketEvents: {
       client: {

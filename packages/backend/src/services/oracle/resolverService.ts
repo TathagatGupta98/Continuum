@@ -15,10 +15,8 @@
  * (Opus / Sonnet / Haiku) rather than N identical calls.
  */
 
-import { z } from 'zod';
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { config } from '../../config';
-import type { AgentVote, EvidencePacket } from '@omnicurve/types';
+import type { AgentVote, EvidencePacket } from './types';
 import { anthropicClient, formatEvidence } from './retrievalService';
 
 const SYSTEM_PROMPT = [
@@ -40,13 +38,24 @@ const SYSTEM_PROMPT = [
   '`reasoning` (cite the specific sources you used).',
 ].join('\n');
 
-// Structured output schema. Numeric range constraints are validated client-side
-// (the API strips them); we additionally clamp confidence below.
-const VoteSchema = z.object({
-  value: z.number(),
-  confidence: z.number(),
-  reasoning: z.string(),
-});
+// Structured output JSON schema. Numeric range constraints are unsupported by
+// structured outputs; we clamp confidence client-side instead.
+const VOTE_SCHEMA = {
+  type: 'object',
+  properties: {
+    value: { type: 'number' },
+    confidence: { type: 'number' },
+    reasoning: { type: 'string' },
+  },
+  required: ['value', 'confidence', 'reasoning'],
+  additionalProperties: false,
+} as const;
+
+interface ParsedVote {
+  value: number;
+  confidence: number;
+  reasoning: string;
+}
 
 function clamp01(n: number): number {
   if (Number.isNaN(n)) return 0;
@@ -60,7 +69,7 @@ async function resolveWithModel(
 ): Promise<AgentVote> {
   const start = Date.now();
   try {
-    const resp = await anthropicClient().messages.parse({
+    const resp = await anthropicClient().messages.create({
       model,
       max_tokens: 4096,
       thinking: { type: 'adaptive' },
@@ -74,25 +83,43 @@ async function resolveWithModel(
             'Respond with value, confidence, and reasoning.',
         },
       ],
-      output_config: { format: zodOutputFormat(VoteSchema) },
+      output_config: { format: { type: 'json_schema', schema: VOTE_SCHEMA } },
     });
 
-    const parsed = resp.parsed_output;
-    if (!parsed) {
+    if (resp.stop_reason === 'refusal') {
       return {
         model,
         value: null,
         confidence: 0,
         reasoning: '',
         latencyMs: Date.now() - start,
-        error: 'no parsed output (refusal or schema mismatch)',
+        error: 'refusal',
+      };
+    }
+
+    const textBlock = resp.content.find((b) => b.type === 'text');
+    const raw = textBlock && textBlock.type === 'text' ? textBlock.text : '';
+    let parsed: ParsedVote | null = null;
+    try {
+      parsed = raw ? (JSON.parse(raw) as ParsedVote) : null;
+    } catch {
+      parsed = null;
+    }
+    if (!parsed || typeof parsed.value !== 'number') {
+      return {
+        model,
+        value: null,
+        confidence: 0,
+        reasoning: raw.slice(0, 500),
+        latencyMs: Date.now() - start,
+        error: 'unparseable structured output',
       };
     }
     return {
       model,
       value: parsed.value,
       confidence: clamp01(parsed.confidence),
-      reasoning: parsed.reasoning,
+      reasoning: parsed.reasoning ?? '',
       latencyMs: Date.now() - start,
     };
   } catch (err) {

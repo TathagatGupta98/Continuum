@@ -17,7 +17,7 @@
  */
 
 import { config } from '../../config';
-import type { AgentVote, EvidencePacket, OracleDecision, OracleStatus } from '@omnicurve/types';
+import type { AgentVote, EvidencePacket, OracleDecision, OracleStatus } from './types';
 
 const MIN_QUORUM = 2;
 
