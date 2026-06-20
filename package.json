@@ -8,5 +8,10 @@
     "test:contracts": "cd packages/contracts && sui move test",
     "dev:backend": "cd packages/backend && pnpm dev",
     "dev:frontend": "cd packages/frontend && pnpm dev"
+  },
+  "pnpm": {
+    "overrides": {
+      "@pythnetwork/pyth-sui-js>@mysten/sui": "1.45.2"
+    }
   }
 }
