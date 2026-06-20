@@ -8,6 +8,8 @@ module continuum::continuum_tests {
     use continuum::gaussian;
     use continuum::market::{Self, Market, Registry, Position};
     use continuum::mock_usdc::{Self, MOCK_USDC};
+    use pyth::price;
+    use pyth::i64 as pyth_i64;
 
     /// |a − b| < tol ?
     fun approx(a: Fp, b: Fp, tol: u256): bool {
@@ -55,6 +57,32 @@ module continuum::continuum_tests {
         assert!(fp::gt(fp::zero(), fp::from(1, true)), 2);
     }
 
+    // ── Pyth price → signed-WAD conversion ────────────────────────────────
+
+    #[test]
+    fun pyth_price_converts_to_wad() {
+        // BTC ≈ $65000.12345678 reported by Pyth as price=6500012345678, expo=-8.
+        // WAD = 65000.12345678 · 1e18.
+        let p = price::new(
+            pyth_i64::new(6_500_012_345_678, false), // price
+            0,                                        // conf
+            pyth_i64::new(8, true),                   // expo = -8
+            0,                                        // timestamp
+        );
+        let (mag, neg) = market::pyth_price_to_fp_for_testing(&p);
+        assert!(!neg, 0);
+        assert!(mag == 65_000_123_456_780_000_000_000, 1);
+    }
+
+    #[test]
+    fun pyth_negative_price_converts() {
+        // A signed feed reporting −2.5 (price=-250, expo=-2) → −2.5 · 1e18 WAD.
+        let p = price::new(pyth_i64::new(250, true), 0, pyth_i64::new(2, true), 0);
+        let (mag, neg) = market::pyth_price_to_fp_for_testing(&p);
+        assert!(neg, 0);
+        assert!(mag == 2_500_000_000_000_000_000, 1);
+    }
+
     // ── Full market lifecycle ─────────────────────────────────────────────
 
     #[test]
@@ -77,6 +105,7 @@ module continuum::continuum_tests {
                 b"Will ETH top $5k?",
                 1_000_000_000_000_000,
                 1000, // resolves_at (ms)
+                b"", // price_feed_id (none → manual market)
                 ts::ctx(&mut sc),
             );
             ts::return_shared(registry);
@@ -156,7 +185,7 @@ module continuum::continuum_tests {
         ts::next_tx(&mut sc, admin);
         {
             let mut registry = ts::take_shared<Registry>(&sc);
-            market::create_market<MOCK_USDC>(&mut registry, b"Timelock", 1_000_000_000_000_000, 1000, ts::ctx(&mut sc));
+            market::create_market<MOCK_USDC>(&mut registry, b"Timelock", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
             assert!(market::market_count(&registry) == 1, 0);
             assert!(market::market_exists(&registry, 0), 1);
             ts::return_shared(registry);
@@ -210,7 +239,7 @@ module continuum::continuum_tests {
         ts::next_tx(&mut sc, admin);
         {
             let mut registry = ts::take_shared<Registry>(&sc);
-            market::create_market<MOCK_USDC>(&mut registry, b"M", 1_000_000_000_000_000, 1000, ts::ctx(&mut sc));
+            market::create_market<MOCK_USDC>(&mut registry, b"M", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
             ts::return_shared(registry);
         };
         ts::next_tx(&mut sc, admin);
@@ -239,7 +268,7 @@ module continuum::continuum_tests {
         {
             let mut registry = ts::take_shared<Registry>(&sc);
             // Market closes at t = 10_000 ms.
-            market::create_market<MOCK_USDC>(&mut registry, b"Scheduled", 1_000_000_000_000_000, 10_000, ts::ctx(&mut sc));
+            market::create_market<MOCK_USDC>(&mut registry, b"Scheduled", 1_000_000_000_000_000, 10_000, b"", ts::ctx(&mut sc));
             assert!(market::market_exists(&registry, 0), 0);
             ts::return_shared(registry);
         };
@@ -269,7 +298,7 @@ module continuum::continuum_tests {
         ts::next_tx(&mut sc, admin);
         {
             let mut registry = ts::take_shared<Registry>(&sc);
-            market::create_market<MOCK_USDC>(&mut registry, b"M", 1_000_000_000_000_000, 1000, ts::ctx(&mut sc));
+            market::create_market<MOCK_USDC>(&mut registry, b"M", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
             ts::return_shared(registry);
         };
 

@@ -29,6 +29,13 @@ module continuum::market {
     use sui::clock::{Self, Clock};
     use continuum::fixed_point::{Self as fp, Fp};
     use continuum::gaussian;
+    // Pyth pull-oracle: read an on-chain price feed for trustless settlement of
+    // financial markets (BTC, ETH, …). See `resolve_with_pyth`.
+    use pyth::pyth;
+    use pyth::price::{Self, Price};
+    use pyth::price_info::{Self, PriceInfoObject};
+    use pyth::price_identifier;
+    use pyth::i64 as pyth_i64;
 
     // ── Constants ─────────────────────────────────────────────────────────
 
@@ -43,6 +50,11 @@ module continuum::market {
     /// `sweep_dust` floor/cap: only sweep dust strictly above 1 USDC, up to 10.
     const DUST_MIN: u64 = 1_000_000;
     const DUST_MAX: u64 = 10_000_000;
+    /// Pyth resolution: max staleness (seconds) tolerated for the price. The
+    /// caller updates the feed in the same PTB, so 60s is ample headroom.
+    const MAX_PRICE_AGE_SECS: u64 = 60;
+    /// Length (bytes) of a Pyth price-feed identifier.
+    const PRICE_FEED_ID_LEN: u64 = 32;
 
     // ── Errors ────────────────────────────────────────────────────────────
 
@@ -68,6 +80,10 @@ module continuum::market {
     const EMarketNotClosed: u64 = 18;
     /// A market must be created with a non-zero scheduled resolution time.
     const EInvalidResolutionTime: u64 = 19;
+    /// Pyth resolution attempted on a market with no bound price-feed id.
+    const ENoPriceFeed: u64 = 20;
+    /// The supplied Pyth `PriceInfoObject` is not the market's bound feed.
+    const EWrongPriceFeed: u64 = 21;
 
     // ── Objects ───────────────────────────────────────────────────────────
 
@@ -140,6 +156,12 @@ module continuum::market {
         /// path (`set_final_price` / `propose_resolution`) may be invoked. Fixed
         /// at creation and never mutated thereafter.
         resolves_at: u64,
+        /// Pyth price-feed identifier (32 bytes) this market settles against, or
+        /// empty for a manual-only market. When set, `resolve_with_pyth` reads
+        /// the bound feed trustlessly instead of trusting a human submitter. Fixed
+        /// at creation so the settlement source can never be swapped underneath
+        /// open positions.
+        price_feed_id: vector<u8>,
 
         // ── Two-step ownership (mirrors the Stylus pending_owner pattern) ──
         pending_owner: address,
@@ -200,11 +222,18 @@ module continuum::market {
         title: vector<u8>,
         sigma_min_mag: u256,
         resolves_at: u64,
+        price_feed_id: vector<u8>,
         ctx: &mut TxContext,
     ) {
         // The scheduled resolution time is mandatory and fixed for the market's
         // lifetime — it gates every resolution path (Clock time, ms).
         assert!(resolves_at > 0, EInvalidResolutionTime);
+        // A bound Pyth feed id, if supplied, must be a full 32-byte identifier.
+        // Empty = a manual-only market (settled via `set_final_price`).
+        assert!(
+            vector::is_empty(&price_feed_id) || vector::length(&price_feed_id) == PRICE_FEED_ID_LEN,
+            ENoPriceFeed,
+        );
 
         let market_id = registry.market_count;
         registry.market_count = market_id + 1;
@@ -233,6 +262,7 @@ module continuum::market {
             final_price: fp::zero(),
             market_resolved: false,
             resolves_at,
+            price_feed_id,
             pending_owner: @0x0,
             proposed_final_price: fp::zero(),
             resolution_time: 0,
@@ -503,6 +533,91 @@ module continuum::market {
         });
     }
 
+    // ── Settlement via Pyth (trustless, for financial markets) ────────────
+
+    /// Resolve a financial market directly from its bound Pyth price feed —
+    /// no trusted submitter. **Permissionless**: anyone may settle once the
+    /// scheduled `resolves_at` has passed, because the outcome is read from
+    /// Pyth rather than asserted by a human (this is the whole point — it
+    /// closes the manual-oracle gap that `set_final_price` leaves open).
+    ///
+    /// The market must have been created with a 32-byte `price_feed_id`, and the
+    /// supplied `price_info_object` must be exactly that feed (checked against the
+    /// on-chain identifier) — so a caller can't settle BTC against the ETH feed.
+    ///
+    /// Pyth is a *pull* oracle: the caller must refresh the feed in the **same
+    /// PTB** (e.g. `pyth::pyth::update_single_price_feed` with a Hermes price
+    /// update) before this call, or the staleness check (`MAX_PRICE_AGE_SECS`)
+    /// aborts. The Pyth price `(price · 10^expo)` is converted to the market's
+    /// signed-WAD `final_price`; settlement then proceeds per-position exactly as
+    /// the manual path (`claim_winnings` / `release_losing_collateral`).
+    public fun resolve_with_pyth<T>(
+        market: &mut Market<T>,
+        price_info_object: &PriceInfoObject,
+        clock: &Clock,
+        _ctx: &TxContext,
+    ) {
+        assert!(!market.market_resolved, EAlreadyResolved);
+        assert!(vector::length(&market.price_feed_id) == PRICE_FEED_ID_LEN, ENoPriceFeed);
+        assert!(clock::timestamp_ms(clock) >= market.resolves_at, EMarketNotClosed);
+
+        // Bind the supplied feed to this market: its on-chain identifier must
+        // match the id fixed at creation.
+        let info = price_info::get_price_info_from_price_info_object(price_info_object);
+        let id = price_identifier::get_bytes(&price_info::get_price_identifier(&info));
+        assert!(id == market.price_feed_id, EWrongPriceFeed);
+
+        // Read a fresh price (pull oracle: caller refreshed it this PTB) and
+        // convert Pyth's `(price · 10^expo)` to our signed-WAD final price.
+        let p = pyth::get_price_no_older_than(price_info_object, clock, MAX_PRICE_AGE_SECS);
+        let final_fp = pyth_price_to_fp(&p);
+
+        market.final_price = final_fp;
+        market.market_resolved = true;
+        event::emit(MarketResolved {
+            market_id: market.market_id,
+            final_mag: fp::mag(final_fp),
+            final_neg: fp::is_neg(final_fp),
+        });
+    }
+
+    /// Convert a Pyth `Price` (`value = price · 10^expo`, both signed) into the
+    /// market's signed-WAD `Fp`: `value · 1e18 = price · 10^(expo + 18)`.
+    fun pyth_price_to_fp(p: &Price): Fp {
+        let price_i = price::get_price(p);
+        let expo_i = price::get_expo(p);
+
+        let price_neg = pyth_i64::get_is_negative(&price_i);
+        let price_mag = (pyth_i64_magnitude(&price_i) as u256);
+
+        let expo_neg = pyth_i64::get_is_negative(&expo_i);
+        let expo_mag = pyth_i64_magnitude(&expo_i);
+
+        // WAD adds 18 decimals; Pyth expos are typically negative (e.g. −8).
+        let scaled = if (expo_neg) {
+            if (expo_mag <= 18) price_mag * pow10(18 - expo_mag)
+            else price_mag / pow10(expo_mag - 18)
+        } else {
+            price_mag * pow10(18 + expo_mag)
+        };
+        fp::from(scaled, price_neg)
+    }
+
+    /// Absolute magnitude of a Pyth `I64` (its two getters each abort on the
+    /// wrong sign, so branch first).
+    fun pyth_i64_magnitude(i: &pyth_i64::I64): u64 {
+        if (pyth_i64::get_is_negative(i)) pyth_i64::get_magnitude_if_negative(i)
+        else pyth_i64::get_magnitude_if_positive(i)
+    }
+
+    /// 10^n as u256.
+    fun pow10(n: u64): u256 {
+        let mut r: u256 = 1;
+        let mut i = 0;
+        while (i < n) { r = r * 10; i = i + 1; };
+        r
+    }
+
     /// Redeem a winning position for collateral (1 USDC per token). Consumes the
     /// `Position` object.
     public fun claim_winnings<T>(market: &mut Market<T>, position: Position, ctx: &mut TxContext) {
@@ -738,6 +853,12 @@ module continuum::market {
     /// Scheduled close (ms): earliest `Clock` time at which the market may be
     /// resolved. Fixed at creation.
     public fun resolves_at<T>(market: &Market<T>): u64 { market.resolves_at }
+    /// Bound Pyth price-feed id (32 bytes), or empty for a manual-only market.
+    public fun price_feed_id<T>(market: &Market<T>): vector<u8> { market.price_feed_id }
+    /// Whether this market is wired to a Pyth feed (settled via `resolve_with_pyth`).
+    public fun has_price_feed<T>(market: &Market<T>): bool {
+        vector::length(&market.price_feed_id) == PRICE_FEED_ID_LEN
+    }
     public fun market_id<T>(market: &Market<T>): u64 { market.market_id }
     public fun owner<T>(market: &Market<T>): address { market.owner }
     public fun pending_owner<T>(market: &Market<T>): address { market.pending_owner }
@@ -805,4 +926,12 @@ module continuum::market {
 
     #[test_only]
     public fun init_for_testing(ctx: &mut TxContext) { init(ctx) }
+
+    /// Expose the Pyth-price → signed-WAD conversion for unit tests (constructing
+    /// a full `PriceInfoObject` in tests would require live Pyth/Wormhole state).
+    #[test_only]
+    public fun pyth_price_to_fp_for_testing(p: &Price): (u256, bool) {
+        let fp_val = pyth_price_to_fp(p);
+        (fp::mag(fp_val), fp::is_neg(fp_val))
+    }
 }
