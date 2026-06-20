@@ -109,6 +109,8 @@ export interface EvidencePacket {
   /** Market scheduled close (`resolves_at`, ms). Evidence is filtered to ≤ this. */
   resolvesAt: number;
   sources: EvidenceSource[];
+  /** Optional researcher synthesis of the sources, passed to every agent. */
+  summary?: string;
 }
 
 /** One agent's independent scalar estimate of the market's final value. */

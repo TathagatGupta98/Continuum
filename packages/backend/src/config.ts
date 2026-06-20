@@ -71,6 +71,59 @@ const envSchema = z.object({
     .regex(SUI_HEX, 'OWNER_ADDRESS must be a 0x-prefixed Sui address')
     .optional()
     .default('0x0'),
+
+  // ─── Multi-agent AI oracle ───
+  // Master switch for the resolution worker. Off by default so the server boots
+  // (and existing deployments behave) without any oracle credentials configured.
+  ORACLE_ENABLED: z
+    .string()
+    .optional()
+    .default('false')
+    .transform((s) => s === 'true' || s === '1'),
+  // Anthropic API key for the LLM ensemble. The SDK also reads ANTHROPIC_API_KEY
+  // from the environment directly; kept here so misconfig fails fast when enabled.
+  ANTHROPIC_API_KEY: z.string().optional().default(''),
+  // Comma-separated Claude model ids forming the (diverse-tier) ensemble.
+  ORACLE_MODELS: z
+    .string()
+    .optional()
+    .default('claude-opus-4-8,claude-sonnet-4-6,claude-haiku-4-5')
+    .transform((s) => s.split(',').map((v) => v.trim()).filter(Boolean)),
+  // Milliseconds between resolution-worker passes (scans for closed markets).
+  ORACLE_POLL_INTERVAL_MS: z
+    .string()
+    .default('60000')
+    .transform(Number)
+    .pipe(z.number().int().positive()),
+  // Mean-confidence floor for auto-resolution (paper's 0.91 median operating point).
+  ORACLE_CONFIDENCE_THRESHOLD: z
+    .string()
+    .default('0.91')
+    .transform(Number)
+    .pipe(z.number().min(0).max(1)),
+  // Relative tolerance band (fraction) for scalar agreement across agents.
+  // Agents "agree" when (max-min) ≤ tolerance · max(|aggregate|, 1).
+  ORACLE_AGREEMENT_TOLERANCE: z
+    .string()
+    .default('0.02')
+    .transform(Number)
+    .pipe(z.number().positive()),
+  // When true, an AUTO_RESOLVED decision is submitted on-chain via set_final_price.
+  // When false, the oracle computes + records the decision but never signs.
+  ORACLE_AUTO_SUBMIT: z
+    .string()
+    .optional()
+    .default('false')
+    .transform((s) => s === 'true' || s === '1'),
+  // Owner keypair used to sign set_final_price. Sui bech32 (`suiprivkey1...`).
+  // Required only when ORACLE_AUTO_SUBMIT is true.
+  ORACLE_SIGNER_KEY: z.string().optional().default(''),
+  // Max evidence sources gathered per market.
+  ORACLE_MAX_SOURCES: z
+    .string()
+    .default('10')
+    .transform(Number)
+    .pipe(z.number().int().positive()),
 });
 
 const parsed = envSchema.safeParse(process.env);
