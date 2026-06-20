@@ -19,6 +19,8 @@ import {
   getResolvesAt,
   getMarketState,
   submitFinalPrice,
+  getPriceFeedId,
+  resolveWithPyth,
 } from '../chainService';
 import { gatherEvidence } from './retrievalService';
 import { runEnsemble } from './resolverService';
@@ -177,6 +179,62 @@ export async function resolveMarket(marketId: string): Promise<OracleDecision> {
   return decision;
 }
 
+// ─── Pyth settlement (financial markets) ─────────────────────────────────────
+
+/** True when the keeper should auto-settle Pyth-bound markets on-chain. */
+function pythResolutionActive(): boolean {
+  return config.PYTH_RESOLUTION_ENABLED && Boolean(config.ORACLE_SIGNER_KEY);
+}
+
+/**
+ * Settle a price-feed-bound market trustlessly via `market::resolve_with_pyth`.
+ * No LLM ensemble: Pyth *is* the oracle. Records the attempt in the same
+ * OracleResolution audit table (status SUBMITTED / FAILED) so the keeper won't
+ * re-fire it on the next pass.
+ */
+async function resolveViaPyth(
+  market: { marketId: string; objectId: string; collateralType: string },
+  feedId: string,
+): Promise<void> {
+  console.log(`🛰️  Pyth resolution START — market ${market.marketId}, feed ${feedId}`);
+
+  await prisma.oracleResolution.upsert({
+    where: { marketId: market.marketId },
+    create: { marketId: market.marketId, status: 'PENDING' },
+    update: { status: 'PENDING', error: null },
+  });
+
+  try {
+    const digest = await resolveWithPyth({
+      objectId: market.objectId,
+      collateralType: market.collateralType,
+      feedId,
+    });
+    await prisma.oracleResolution.update({
+      where: { marketId: market.marketId },
+      data: {
+        status: 'SUBMITTED',
+        txDigest: digest,
+        // Pyth is a single trusted on-chain source: full confidence, no spread.
+        meanConfidence: 1,
+        agreement: true,
+        compositeScore: 2,
+        agentVotesJson: JSON.stringify([{ model: 'pyth-network', feedId }]),
+        evidenceJson: JSON.stringify({ oracle: 'pyth', feedId, endpoint: config.HERMES_ENDPOINT }),
+        error: null,
+      },
+    });
+    console.log(`🛰️  ✅ Pyth SUBMITTED on-chain — market ${market.marketId}\n   tx: ${digest}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await prisma.oracleResolution.update({
+      where: { marketId: market.marketId },
+      data: { status: 'FAILED', error: `pyth: ${message}` },
+    });
+    console.error(`🛰️  ❌ Pyth resolution FAILED — market ${market.marketId}\n   reason: ${message}`);
+  }
+}
+
 // ─── Resolution worker ───────────────────────────────────────────────────────
 
 let workerTimer: NodeJS.Timeout | null = null;
@@ -200,7 +258,14 @@ async function scanOnce(): Promise<void> {
       if (state?.isResolved) continue;
 
       try {
-        await resolveMarket(market.marketId);
+        // Route by settlement source: a market bound to a Pyth price feed
+        // settles trustlessly on-chain; everything else falls to the AI oracle.
+        const feedId = pythResolutionActive() ? await getPriceFeedId(market.objectId) : '';
+        if (feedId) {
+          await resolveViaPyth(market, feedId);
+        } else if (config.ORACLE_ENABLED) {
+          await resolveMarket(market.marketId);
+        }
       } catch (err) {
         console.error(`🔮 Oracle scan error — market ${market.marketId}:`, err);
       }
@@ -217,17 +282,24 @@ async function scanOnce(): Promise<void> {
  * is disabled. Returns a stop function for graceful shutdown.
  */
 export function startResolutionWorker(): () => void {
-  if (!config.ORACLE_ENABLED) {
-    console.log('🔮 Oracle disabled (ORACLE_ENABLED=false) — resolution worker not started');
+  const pythActive = pythResolutionActive();
+  // The worker drives two settlement sources: the AI oracle (non-price markets)
+  // and Pyth (financial markets). Start it if either is live.
+  if (!config.ORACLE_ENABLED && !pythActive) {
+    console.log(
+      '🔮 Resolution worker not started — ORACLE_ENABLED=false and Pyth resolution inactive ' +
+        '(set PYTH_RESOLUTION_ENABLED=true + ORACLE_SIGNER_KEY to settle price markets)',
+    );
     return () => {};
   }
-  if (config.ORACLE_AUTO_SUBMIT && !config.ORACLE_SIGNER_KEY) {
+  if (config.ORACLE_ENABLED && config.ORACLE_AUTO_SUBMIT && !config.ORACLE_SIGNER_KEY) {
     console.warn('🔮 ORACLE_AUTO_SUBMIT is on but ORACLE_SIGNER_KEY is unset — submissions will fail');
   }
   workerTimer = setInterval(() => { void scanOnce(); }, config.ORACLE_POLL_INTERVAL_MS);
   console.log(
-    `🔮 Oracle resolution worker active — every ${config.ORACLE_POLL_INTERVAL_MS}ms, ` +
-      `models [${config.ORACLE_MODELS.join(', ')}], auto-submit=${config.ORACLE_AUTO_SUBMIT}`,
+    `🔮 Resolution worker active — every ${config.ORACLE_POLL_INTERVAL_MS}ms` +
+      ` | AI oracle=${config.ORACLE_ENABLED} (models [${config.ORACLE_MODELS.join(', ')}], auto-submit=${config.ORACLE_AUTO_SUBMIT})` +
+      ` | Pyth=${pythActive}`,
   );
   return () => { if (workerTimer) clearInterval(workerTimer); };
 }

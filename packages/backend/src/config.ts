@@ -146,6 +146,37 @@ const envSchema = z.object({
     .default('10')
     .transform(Number)
     .pipe(z.number().int().positive()),
+
+  // ─── Pyth on-chain price oracle (financial markets) ───
+  // Markets created with a 32-byte `price_feed_id` settle trustlessly via
+  // `market::resolve_with_pyth` instead of the LLM ensemble. The resolution
+  // worker routes those to Pyth (permissionless on-chain read) and leaves
+  // non-price markets to the AI oracle. On by default so the worker resolves
+  // price markets even when the AI oracle (ORACLE_ENABLED) is off — but it still
+  // only signs when ORACLE_SIGNER_KEY is set.
+  PYTH_RESOLUTION_ENABLED: z
+    .string()
+    .optional()
+    .default('true')
+    .transform((s) => s === 'true' || s === '1'),
+  // Pyth Sui `State` object id (Beta channel / testnet by default).
+  PYTH_STATE_ID: z
+    .string()
+    .regex(SUI_HEX, 'PYTH_STATE_ID must be a 0x-prefixed Sui object id')
+    .default('0x243759059f4c3111179da5878c12f68d612c21a8d54d85edc86164bb18be1c7c'),
+  // Wormhole Sui `State` object id (Pyth's VAA-verification dependency).
+  WORMHOLE_STATE_ID: z
+    .string()
+    .regex(SUI_HEX, 'WORMHOLE_STATE_ID must be a 0x-prefixed Sui object id')
+    .default('0x31358d198147da50db32eda2562951d53973a0c0ad5ed738e9b17d88b213d790'),
+  // Hermes REST endpoint serving signed Pyth price updates. Defaults to the BETA
+  // channel to match the testnet Pyth/Wormhole defaults above (testnet uses a
+  // different Wormhole guardian set + different feed ids than mainnet). On
+  // mainnet, set this to https://hermes.pyth.network.
+  HERMES_ENDPOINT: z
+    .string()
+    .url({ message: 'HERMES_ENDPOINT must be a valid URL' })
+    .default('https://hermes-beta.pyth.network'),
 });
 
 const parsed = envSchema.safeParse(process.env);

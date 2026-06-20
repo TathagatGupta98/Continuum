@@ -19,6 +19,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { bcs } from '@mysten/sui/bcs';
 import { normalizeSuiAddress, SUI_CLOCK_OBJECT_ID } from '@mysten/sui/utils';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { SuiPythClient, SuiPriceServiceConnection } from '@pythnetwork/pyth-sui-js';
 import { config } from '../config';
 import prisma from '../models/db';
 import { broadcastMarketUpdate, broadcastMarketResolved, broadcastMarketCreated } from '../sockets/socketManager';
@@ -129,6 +130,23 @@ export async function getResolvesAt(objectId: string): Promise<number> {
   }
 }
 
+/**
+ * The market's bound Pyth price-feed id as a 0x-prefixed hex string, or '' if the
+ * market has none (a manual market). On Sui a `vector<u8>` object-field is read
+ * back as an array of byte values.
+ */
+export async function getPriceFeedId(objectId: string): Promise<string> {
+  try {
+    const obj = await suiClient.getObject({ id: objectId, options: { showContent: true } });
+    const f: any = (obj.data?.content as any)?.fields;
+    const raw = f?.price_feed_id;
+    if (!Array.isArray(raw) || raw.length === 0) return '';
+    return '0x' + raw.map((b: number) => (b & 0xff).toString(16).padStart(2, '0')).join('');
+  } catch {
+    return '';
+  }
+}
+
 // ─── Settlement submission (oracle signing path) ─────────────────────────────
 
 /** Convert a signed JS float to the contract's `Fp` parts (WAD magnitude + sign). */
@@ -207,6 +225,68 @@ export async function submitFinalPrice(params: {
   const status = res.effects?.status?.status;
   if (status !== 'success') {
     throw new Error(`set_final_price failed: ${res.effects?.status?.error ?? 'unknown'}`);
+  }
+  return res.digest;
+}
+
+// ─── Trustless settlement via Pyth (financial markets) ───────────────────────
+
+let pythClient: SuiPythClient | null = null;
+function getPythClient(): SuiPythClient {
+  if (!pythClient) {
+    pythClient = new SuiPythClient(suiClient, config.PYTH_STATE_ID, config.WORMHOLE_STATE_ID);
+  }
+  return pythClient;
+}
+
+/**
+ * Settle a financial market directly from its bound Pyth feed via
+ * `market::resolve_with_pyth`. Pyth is a pull oracle, so this builds one PTB
+ * that (1) fetches a signed price update from Hermes and refreshes the on-chain
+ * `PriceInfoObject`, then (2) reads it in `resolve_with_pyth` — atomically, so
+ * the staleness check always passes. The Move call is permissionless (the price
+ * is trustless), so the signer only pays gas; we reuse the oracle keeper key.
+ * Returns the tx digest; the event poller writes `finalPrice` from MarketResolved.
+ */
+export async function resolveWithPyth(params: {
+  objectId: string;
+  collateralType: string;
+  feedId: string; // 0x-prefixed 32-byte hex
+}): Promise<string> {
+  const { objectId, collateralType, feedId } = params;
+  const signer = getOracleSigner();
+
+  // 1. Pull the latest signed price update for this feed from Hermes.
+  const connection = new SuiPriceServiceConnection(config.HERMES_ENDPOINT);
+  const updateData = await connection.getPriceFeedsUpdateData([feedId]);
+
+  // 2. Refresh the on-chain PriceInfoObject, then resolve against it in one PTB.
+  const tx = new Transaction();
+  const priceInfoObjectIds = await getPythClient().updatePriceFeeds(tx, updateData, [feedId]);
+  const priceInfoObjectId = priceInfoObjectIds[0];
+  if (!priceInfoObjectId) {
+    throw new Error(`Pyth returned no price-info object for feed ${feedId}`);
+  }
+
+  tx.moveCall({
+    target: `${PKG}::${MODULE}::resolve_with_pyth`,
+    typeArguments: [collateralType],
+    arguments: [
+      tx.object(objectId),
+      tx.object(priceInfoObjectId),
+      tx.object(SUI_CLOCK_OBJECT_ID),
+    ],
+  });
+
+  const res = await suiClient.signAndExecuteTransaction({
+    signer,
+    transaction: tx,
+    options: { showEffects: true },
+  });
+
+  const status = res.effects?.status?.status;
+  if (status !== 'success') {
+    throw new Error(`resolve_with_pyth failed: ${res.effects?.status?.error ?? 'unknown'}`);
   }
   return res.digest;
 }
