@@ -17,6 +17,20 @@ enum Direction {
   BELOW
 }
 
+// Lifecycle of a multi-agent AI oracle resolution attempt for a market.
+// PENDING       → pipeline running / awaiting evidence
+// AUTO_RESOLVED → agents agreed at high confidence; eligible for on-chain submit
+// ESCALATED     → split vote / low confidence / thin evidence → human arbitration
+// SUBMITTED     → set_final_price tx sent on-chain (txDigest populated)
+// FAILED        → pipeline error
+enum OracleStatus {
+  PENDING
+  AUTO_RESOLVED
+  ESCALATED
+  SUBMITTED
+  FAILED
+}
+
 model User {
   walletAddress             String          @id
   rolePreference            RolePreference  @default(STAKER)
@@ -43,6 +57,37 @@ model Market {
   // YES wins iff finalPrice >= strike, NO wins iff finalPrice < strike.
   finalPrice        Float?
   positions         Position[]
+  oracleResolution  OracleResolution?
+}
+
+// Audit + state for the multi-agent AI oracle that settles a market (see the
+// Continuum oracle plan). One row per market resolution attempt. Win/lose stays
+// per-position on-chain; this captures how the settlement `finalPrice` was derived.
+model OracleResolution {
+  id              String       @id @default(cuid())
+  marketId        String       @unique
+  status          OracleStatus @default(PENDING)
+  // Confidence-weighted aggregate of agent estimates (signed, market units).
+  aggregatedValue Float?
+  // Robust fallback aggregate (median of agent estimates).
+  medianValue     Float?
+  // Arithmetic mean of agent self-reported confidences (0..1).
+  meanConfidence  Float?
+  // True when all agents' estimates fall within the tolerance band.
+  agreement       Boolean      @default(false)
+  // 1[agreement] + meanConfidence  (paper's escalation score, range 0..2).
+  compositeScore  Float?
+  // JSON-encoded AgentVote[] (model, value, confidence, reasoning, latency, error).
+  agentVotesJson  String?
+  // JSON-encoded EvidencePacket passed identically to every agent.
+  evidenceJson    String?
+  // Digest of the set_final_price tx once submitted on-chain.
+  txDigest        String?
+  error           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  market Market @relation(fields: [marketId], references: [marketId])
 }
 
 model Position {

@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.105.0",
     "@libsql/client": "^0.17.3",
     "@mysten/sui": "^1.30.0",
     "@omnicurve/types": "workspace:*",

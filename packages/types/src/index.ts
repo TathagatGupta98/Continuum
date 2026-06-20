@@ -79,3 +79,76 @@ export interface MarketView {
   isResolved: boolean;
   finalPrice: number | null;
 }
+
+// ─── Multi-agent AI oracle (settlement) ──────────────────────────────────────
+// Continuum settles to a single scalar `finalPrice`; the oracle estimates that
+// real-world value with an ensemble of LLM agents over a shared evidence packet
+// (independent aggregation — no debate), then either auto-submits when the agents
+// agree at high confidence or escalates to human arbitration. Based on Kota,
+// "Multi-Agent AI Oracle Systems for Prediction Market Resolution" (arXiv 2605.30802).
+
+/** One source in the shared, date-filtered evidence packet. */
+export interface EvidenceSource {
+  title: string;
+  url: string;
+  /** ISO date the source was published (used for the temporal filter). */
+  publishedDate?: string;
+  /** Extracted highlight / snippet relevant to the question. */
+  snippet: string;
+}
+
+/** The identical evidence handed to every agent — isolates reasoning from retrieval. */
+export interface EvidencePacket {
+  marketId: string;
+  /** The resolution question / market title the evidence was gathered for. */
+  question: string;
+  /** Search query used to retrieve the sources. */
+  query: string;
+  /** ISO timestamp the packet was assembled. */
+  retrievedAt: string;
+  /** Market scheduled close (`resolves_at`, ms). Evidence is filtered to ≤ this. */
+  resolvesAt: number;
+  sources: EvidenceSource[];
+}
+
+/** One agent's independent scalar estimate of the market's final value. */
+export interface AgentVote {
+  /** Model id, e.g. `claude-opus-4-8`. */
+  model: string;
+  /** Estimated real-world final value in market units (signed); null on failure. */
+  value: number | null;
+  /** Agent self-reported confidence, 0..1. */
+  confidence: number;
+  /** Natural-language reasoning grounded in the evidence packet. */
+  reasoning: string;
+  latencyMs: number;
+  /** Structured failure message instead of throwing; present when value is null. */
+  error?: string;
+}
+
+export type OracleStatus =
+  | 'PENDING'
+  | 'AUTO_RESOLVED'
+  | 'ESCALATED'
+  | 'SUBMITTED'
+  | 'FAILED';
+
+/** Aggregated, escalation-scored decision produced by the oracle pipeline. */
+export interface OracleDecision {
+  marketId: string;
+  status: OracleStatus;
+  /** Confidence-weighted aggregate of agent estimates (signed market units). */
+  aggregatedValue: number | null;
+  /** Median of agent estimates (robust fallback aggregate). */
+  medianValue: number | null;
+  /** Mean of agent confidences (0..1). */
+  meanConfidence: number;
+  /** True when every agent estimate is within the tolerance band. */
+  agreement: boolean;
+  /** 1[agreement] + meanConfidence (range 0..2). */
+  compositeScore: number;
+  votes: AgentVote[];
+  evidence: EvidencePacket;
+  /** Digest of the on-chain set_final_price tx, once submitted. */
+  txDigest?: string;
+}
