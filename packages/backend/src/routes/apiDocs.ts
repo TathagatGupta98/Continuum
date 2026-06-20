@@ -162,7 +162,7 @@ router.get('/', (req: Request, res: Response) => {
       {
         path: '/api/oracle/:marketId/resolve',
         method: 'POST',
-        description: 'Manually trigger (or re-run) the AI oracle pipeline for a market — gather shared evidence, run the independent Claude ensemble, aggregate, and (if ORACLE_AUTO_SUBMIT) submit set_final_price on-chain.',
+        description: 'Manually trigger (or re-run) the AI oracle pipeline for a market — gather shared evidence, run the independent LLM ensemble, aggregate, and (if ORACLE_AUTO_SUBMIT) submit set_final_price on-chain.',
         params: { marketId: { type: 'string', required: true, description: 'Market ID' } },
         response: { success: true, data: 'OracleDecision' },
       },

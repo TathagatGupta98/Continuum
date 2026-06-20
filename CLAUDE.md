@@ -1,14 +1,16 @@
 # Continuum — Full Project Context
 
-> **Migration status (updated 2026-06-19):** Continuum was originally built on **Arbitrum
+> **Migration status (updated 2026-06-20):** Continuum was originally built on **Arbitrum
 > Stylus (Rust/WASM)** and has been ported to **Sui Move** for the **Sui Overflow** hackathon.
-> The **smart-contract layer, the backend/indexer, and the shared types are fully migrated** —
-> `packages/contracts` is a single Sui Move package (`continuum`), `packages/backend` reads
-> `Market<T>` shared objects and polls the package's Move events via `@mysten/sui` (the
-> viem/Goldsky path is gone), and `packages/types` exports Move package/function references
-> instead of EVM ABIs. The package is **deployed and live on Sui testnet** and the backend is
-> wired to it. The **frontend still targets the old EVM stack** (Wagmi/Viem) and is the one
-> remaining migration item; its section below is retained for reference and flagged accordingly.
+> The migration is **complete across all layers** — `packages/contracts` is a single Sui Move
+> package (`continuum`), `packages/backend` reads `Market<T>` shared objects and polls the
+> package's Move events via `@mysten/sui` (the viem/Goldsky path is gone), `packages/types`
+> exports Move package/function references instead of EVM ABIs, and the **frontend is now on
+> `@mysten/dapp-kit` + `@mysten/sui`** (PTBs replace ABI calls, owned `Position` / shared
+> `Market<T>` objects replace ERC-1155 / proxy addresses, no ERC-20 approval step — the
+> Wagmi/Viem/RainbowKit stack is gone). The package is **deployed and live on Sui testnet** and
+> the backend and frontend are both wired to it. See `packages/frontend/CLAUDE.md` for the
+> frontend architecture reference.
 >
 > **Live testnet deployment (Sui):**
 > - `PACKAGE_ID` = `0x8c80c6ea53152d99206fccf8b1fb18a302ea9acf68f19e0fd5664bb0339ac599`
@@ -25,11 +27,13 @@
 > **AI oracle (added 2026-06-20):** a **multi-agent LLM settlement oracle** now lives in the
 > backend (`packages/backend/src/services/oracle/`), based on Kota, *Multi-Agent AI Oracle
 > Systems for Prediction Market Resolution* (arXiv 2605.30802). It gathers a shared evidence
-> packet, runs an **independent Claude ensemble** over it, **confidence-weighted aggregates**
+> packet, runs an **independent LLM ensemble** over it, **confidence-weighted aggregates**
 > the result, and either **auto-submits `set_final_price`** on-chain or **escalates to human
-> arbitration**. It is **gated off by default** (`ORACLE_ENABLED=false`); see *AI Oracle
-> (settlement layer)* below. This is the backend that *drives* the existing manual on-chain
-> resolution entry points — the contracts are unchanged.
+> arbitration**. The ensemble runs over **OpenRouter** (OpenAI-compatible gateway) and defaults
+> to **DeepSeek-R1** (`deepseek/deepseek-r1`); `ORACLE_MODELS` can list several distinct
+> OpenRouter models for cross-model diversity. It is **gated off by default**
+> (`ORACLE_ENABLED=false`); see *AI Oracle (settlement layer)* below. This is the backend that
+> *drives* the existing manual on-chain resolution entry points — the contracts are unchanged.
 
 ## What is Continuum?
 
@@ -68,10 +72,10 @@ Where μ (mu) is the market's expected value (mean) and σ (sigma) is the market
 | Smart Contracts | **Sui Move** (`edition = 2024.beta`), Sui framework (`framework/testnet`) — one `continuum` package |
 | Monorepo | pnpm workspaces (JS packages) + a standalone Move package |
 | Backend API | Node.js, TypeScript, Express 5, Socket.io, `@mysten/sui` |
-| AI oracle | `@anthropic-ai/sdk` — multi-agent Claude ensemble for settlement (arXiv 2605.30802) |
+| AI oracle | `openai` SDK → **OpenRouter** — multi-agent LLM ensemble (default DeepSeek-R1) for settlement (arXiv 2605.30802) |
 | Database | Prisma ORM (SQLite for local dev, PostgreSQL in production) |
 | Indexer | Sui event poller — RPC polling of the package's Move events via `@mysten/sui` |
-| Frontend *(migration pending)* | React + TypeScript + Vite + Tailwind + d3 — wallet/tx layer to move from Wagmi/Viem to `@mysten/dapp-kit` + `@mysten/sui` |
+| Frontend | React + TypeScript + Vite + Tailwind + d3 — wallet/tx layer on `@mysten/dapp-kit` + `@mysten/sui` (PTBs) |
 | Shared Types | TypeScript package — Move package/function references (EVM ABIs removed) |
 | Deployment | Sui testnet (`sui client publish`) |
 
@@ -95,7 +99,7 @@ Continuum/
 │   │   └── README.md             # Move-package design + build/test + logic-coverage map
 │   │
 │   ├── backend/            # Node.js API & real-time server — Sui (@mysten/sui event poller)
-│   ├── frontend/           # React + Vite app — TARGETS OLD EVM STACK (migration pending)
+│   ├── frontend/           # React + Vite app — Sui (@mysten/dapp-kit + @mysten/sui, PTBs)
 │   └── types/              # Shared TS types — Move package/function references
 │
 ├── docs/                   # Project docs / diagrams (README + DESIGN.md)
@@ -330,9 +334,10 @@ Single TypeScript stack — Express 5 + Socket.io + Prisma + `@mysten/sui`.
 - **`indexerService.ts`** — Sui event ingester (poller); reconciles DB state from chain events.
 - **`mathService.ts`** — Gaussian CDF via jStat for off-chain price preview; the math is identical
   to `gaussian.move`.
-- **`oracle/` (AI settlement oracle)** — `retrievalService.ts` (shared, date-filtered evidence via
-  Claude `web_search`), `resolverService.ts` (independent Claude ensemble, scalar JSON-schema
-  output), `aggregationService.ts` (confidence-weighted aggregate + agreement + escalation score),
+- **`oracle/` (AI settlement oracle)** — `retrievalService.ts` (shared, date-constrained evidence via
+  OpenRouter's `:online` web-search plugin; exports the shared `openrouterClient`), `resolverService.ts`
+  (independent OpenRouter/DeepSeek ensemble, JSON-object output with a balanced-`{…}` fallback parser),
+  `aggregationService.ts` (confidence-weighted aggregate + agreement + escalation score),
   `oracleService.ts` (orchestrator + keeper worker), `types.ts` (local copy of the shared oracle
   shapes). `chainService.ts` also gained the **signing path** (`submitFinalPrice`, `getResolvesAt`,
   `oracleSignerAddress`). See *AI Oracle (settlement layer)*.
@@ -356,8 +361,9 @@ via persuasive error propagation).
 1. **Scalar estimation** — Continuum settles to one `finalPrice`, so each agent estimates the
    real-world value at `resolves_at` (signed, market units); the aggregate maps directly to
    `market::set_final_price`. (Not per-strike binary like the paper.)
-2. **Claude-only ensemble** — distinct tiers (`claude-opus-4-8` + `claude-sonnet-4-6` +
-   `claude-haiku-4-5`) to decorrelate errors within one vendor; the paper's caveat is that
+2. **OpenRouter ensemble (default DeepSeek-R1)** — the ensemble runs over OpenRouter and defaults
+   to a single `deepseek/deepseek-r1` reasoner; `ORACLE_MODELS` can list several distinct OpenRouter
+   model ids to span vendors/tiers and decorrelate errors. The paper's caveat is that single-model /
    same-vendor ensembles have higher error correlation, so escalation thresholds are kept strict.
 3. **Immediate `set_final_price`** on auto-resolve (no two-phase timelock) — irreversible, hence
    strict thresholds + the escalation safety net.
@@ -372,28 +378,32 @@ human; zero usable estimates → `FAILED`. `compositeScore = 1[agreement] + mean
 must be the market owner) → `SUBMITTED`; the event poller then writes `Market.finalPrice` from
 `MarketResolved`, and bettor positions settle per-position via `claim_winnings` as usual.
 
-**Env (all in `config.ts`/`.env`, oracle off by default):** `ORACLE_ENABLED`, `ANTHROPIC_API_KEY`,
-`ORACLE_MODELS`, `ORACLE_POLL_INTERVAL_MS`, `ORACLE_CONFIDENCE_THRESHOLD`,
+**Env (all in `config.ts`/`.env`, oracle off by default):** `ORACLE_ENABLED`, `OPENROUTER_API_KEY`,
+`OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`), `ORACLE_RETRIEVAL_MODEL` (default
+`deepseek/deepseek-r1`; `:online` appended automatically for web search), `ORACLE_MODELS` (default
+`deepseek/deepseek-r1`), `ORACLE_POLL_INTERVAL_MS`, `ORACLE_CONFIDENCE_THRESHOLD`,
 `ORACLE_AGREEMENT_TOLERANCE`, `ORACLE_AUTO_SUBMIT`, `ORACLE_SIGNER_KEY`, `ORACLE_MAX_SOURCES`.
 
-**Notes / constraints:** the resolver uses a **raw JSON-schema** structured output (the SDK's
-`zodOutputFormat` helper needs zod v4; the backend is on zod v3). Oracle types are mirrored in
-`packages/types` but the backend uses a **local `oracle/types.ts`** because its tsconfig
-`rootDir: ./src` rejects cross-package source imports (TS6059). Still TODO: a KalshiBench-style
-eval harness to calibrate thresholds, and a live end-to-end run.
+**Notes / constraints:** the resolver requests OpenRouter's `response_format: { type: 'json_object' }`
+(plain JSON mode, not a JSON schema) and parses the result with a balanced-`{…}` fallback, because
+reasoning models like DeepSeek-R1 can wrap/precede the object with prose even under JSON mode.
+Retrieval reads OpenRouter's `url_citation` annotations (not Anthropic `web_search` result blocks)
+to build the evidence sources. Oracle types are mirrored in `packages/types` but the backend uses a
+**local `oracle/types.ts`** because its tsconfig `rootDir: ./src` rejects cross-package source
+imports (TS6059). Still TODO: a KalshiBench-style eval harness to calibrate thresholds, and a live
+end-to-end run.
 
 ---
 
 ## Known Issues & Gaps
 
-### Migration TODO (Sui)
-- **Frontend not yet on Sui** *(the one remaining item)*: wallet/tx layer is Wagmi/Viem; move to
-  `@mysten/dapp-kit` + `@mysten/sui`, PTBs for `buy_yes`/`buy_no`/`add_liquidity`, and
-  object-ID-based reads. Note `packages/frontend/src/config/contracts.ts` still imports
-  non-existent EVM ABI paths (`@omnicurve/types/abis/*.json`) — its build is broken until the
-  Sui tx layer replaces them.
-- *(Done: contracts, backend/indexer, and shared types are migrated; package is deployed to
-  testnet and the backend is wired to it.)*
+### Migration status (Sui)
+- **Migration complete across all layers.** Contracts, backend/indexer, shared types, **and the
+  frontend** are on Sui; the package is deployed to testnet and both backend and frontend are
+  wired to it. The frontend wallet/tx layer is `@mysten/dapp-kit` + `@mysten/sui` (PTBs for
+  `buy_yes`/`buy_no`/`add_liquidity`/`create_market`, object-ID-based reads via `SuiClient`); the
+  old EVM ABI imports in `packages/frontend/src/config/contracts.ts` are gone. See
+  `packages/frontend/CLAUDE.md` for the frontend architecture reference.
 
 ### Carried over from the protocol design (not bugs in the Move port)
 - **No slippage protection**: trades have no max-cost parameter.
@@ -436,6 +446,10 @@ cd packages/contracts && sui client publish --gas-budget 200000000
 pnpm --filter @omnicurve/backend start             # db:push → db:seed → start:api (port 3001)
 pnpm --filter @omnicurve/backend start:api         # Express server only (port 3001)
 pnpm --filter @omnicurve/backend db:seed           # Seed DB (discovers markets from chain)
+
+# Frontend (Sui — @mysten/dapp-kit + @mysten/sui)
+pnpm --filter @omnicurve/frontend dev              # Vite dev server (port 5173)
+pnpm --filter @omnicurve/frontend build            # tsc + vite build
 ```
 
 ---

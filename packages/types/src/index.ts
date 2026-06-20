@@ -115,7 +115,7 @@ export interface EvidencePacket {
 
 /** One agent's independent scalar estimate of the market's final value. */
 export interface AgentVote {
-  /** Model id, e.g. `claude-opus-4-8`. */
+  /** Model id, e.g. `deepseek/deepseek-r1`. */
   model: string;
   /** Estimated real-world final value in market units (signed); null on failure. */
   value: number | null;

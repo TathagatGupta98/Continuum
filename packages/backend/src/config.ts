@@ -80,14 +80,27 @@ const envSchema = z.object({
     .optional()
     .default('false')
     .transform((s) => s === 'true' || s === '1'),
-  // Anthropic API key for the LLM ensemble. The SDK also reads ANTHROPIC_API_KEY
-  // from the environment directly; kept here so misconfig fails fast when enabled.
-  ANTHROPIC_API_KEY: z.string().optional().default(''),
-  // Comma-separated Claude model ids forming the (diverse-tier) ensemble.
+  // OpenRouter API key for the LLM ensemble (OpenAI-compatible gateway). Required
+  // when the oracle is enabled; kept here so misconfig fails fast.
+  OPENROUTER_API_KEY: z.string().optional().default(''),
+  // OpenRouter base URL (OpenAI-compatible). Override only for proxies/mocks.
+  OPENROUTER_BASE_URL: z
+    .string()
+    .url({ message: 'OPENROUTER_BASE_URL must be a valid URL' })
+    .default('https://openrouter.ai/api/v1'),
+  // OpenRouter model used for evidence retrieval. The `:online` web-search plugin
+  // is appended automatically so the retriever can browse for primary sources.
+  ORACLE_RETRIEVAL_MODEL: z
+    .string()
+    .optional()
+    .default('deepseek/deepseek-r1'),
+  // Comma-separated OpenRouter model ids forming the ensemble. Defaults to a
+  // single DeepSeek-R1 reasoner; add more (comma-separated) for cross-model
+  // diversity (lower error correlation per the paper).
   ORACLE_MODELS: z
     .string()
     .optional()
-    .default('claude-opus-4-8,claude-sonnet-4-6,claude-haiku-4-5')
+    .default('deepseek/deepseek-r1')
     .transform((s) => s.split(',').map((v) => v.trim()).filter(Boolean)),
   // Milliseconds between resolution-worker passes (scans for closed markets).
   ORACLE_POLL_INTERVAL_MS: z

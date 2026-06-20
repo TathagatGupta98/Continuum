@@ -12,8 +12,10 @@
  *    quorum (≥2) of agents produced a usable estimate; otherwise ESCALATE to a
  *    human. Zero usable estimates → FAILED.
  *
- * Auto-resolution is strict on purpose: the Claude-only ensemble has higher
- * error correlation than a cross-vendor one, so escalation is the safety net.
+ * Auto-resolution is strict on purpose: a single-model (or same-vendor) ensemble
+ * has higher error correlation than a cross-model one, so escalation is the
+ * safety net. Configure `ORACLE_MODELS` with several distinct OpenRouter models
+ * to lower that correlation.
  */
 
 import { config } from '../../config';

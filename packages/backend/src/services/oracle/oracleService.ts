@@ -54,6 +54,12 @@ export async function resolveMarket(marketId: string): Promise<OracleDecision> {
   if (!market) throw new Error(`market ${marketId} not found`);
   if (!market.objectId) throw new Error(`market ${marketId} has no on-chain objectId`);
 
+  console.log(
+    `\n🔮 ─── Oracle resolution START — market ${marketId} ───\n` +
+      `   question: "${market.title}"\n` +
+      `   models:   [${config.ORACLE_MODELS.join(', ')}]`,
+  );
+
   // Mark in-progress so concurrent passes don't double-fire.
   await prisma.oracleResolution.upsert({
     where: { marketId },
@@ -65,12 +71,33 @@ export async function resolveMarket(marketId: string): Promise<OracleDecision> {
 
   let decision: OracleDecision;
   try {
+    console.log(`🔮 [1/3] gathering evidence (closed ${new Date(resolvesAt).toISOString()})…`);
     const evidence = await gatherEvidence({
       marketId,
       question: market.title,
       resolvesAt,
     });
+    console.log(
+      `🔮 [1/3] evidence ready — ${evidence.sources.length} source(s)` +
+        `${evidence.summary ? ', synthesis present' : ', NO synthesis'}`,
+    );
+    if (evidence.sources.length === 0) {
+      console.warn('🔮 [1/3] ⚠ no sources retrieved — agents will be low-confidence');
+    }
+
+    console.log(`🔮 [2/3] running ${config.ORACLE_MODELS.length}-agent ensemble…`);
     const votes = await runEnsemble(evidence);
+    for (const v of votes) {
+      if (v.error) {
+        console.warn(`🔮 [2/3]   ✗ ${v.model} — ${v.error} (${v.latencyMs}ms)`);
+      } else {
+        console.log(
+          `🔮 [2/3]   ✓ ${v.model} — value=${v.value}, conf=${v.confidence.toFixed(2)} (${v.latencyMs}ms)`,
+        );
+      }
+    }
+
+    console.log('🔮 [3/3] aggregating votes…');
     decision = aggregate(marketId, votes, evidence);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -93,7 +120,12 @@ export async function resolveMarket(marketId: string): Promise<OracleDecision> {
       },
     };
     await persist(failed, message);
-    console.error(`🔮 Oracle FAILED — market ${marketId}: ${message}`);
+    console.error(
+      `🔮 ❌ Oracle FAILED — market ${marketId}\n` +
+        `   reason: ${message}\n` +
+        `   (evidence/ensemble threw — see stack below)`,
+    );
+    console.error(err);
     return failed;
   }
 
@@ -106,18 +138,38 @@ export async function resolveMarket(marketId: string): Promise<OracleDecision> {
         value: decision.aggregatedValue,
       });
       decision = { ...decision, status: 'SUBMITTED', txDigest: digest };
-      console.log(`🔮 Oracle SUBMITTED — market ${marketId} @ ${decision.aggregatedValue} (tx ${digest})`);
+      console.log(
+        `🔮 ✅ Oracle SUBMITTED on-chain — market ${marketId} @ finalPrice=${decision.aggregatedValue}\n` +
+          `   tx: ${digest}`,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await persist(decision, `auto-submit failed: ${message}`);
-      console.error(`🔮 Oracle auto-submit failed — market ${marketId}: ${message}`);
+      console.error(
+        `🔮 ❌ Oracle auto-submit FAILED — market ${marketId}\n` +
+          `   reason: ${message}\n` +
+          `   (decision was AUTO_RESOLVED @ ${decision.aggregatedValue} but the on-chain tx failed)`,
+      );
+      console.error(err);
       return decision;
     }
   } else {
+    const icon = decision.status === 'AUTO_RESOLVED' ? '✅' : decision.status === 'FAILED' ? '❌' : '⚠️';
+    const reason =
+      decision.status === 'FAILED'
+        ? 'no agent produced a usable estimate'
+        : decision.status === 'ESCALATED'
+          ? !decision.agreement
+            ? 'agents disagree (estimates outside tolerance band) → human arbitration'
+            : `mean confidence ${decision.meanConfidence.toFixed(2)} < threshold ${config.ORACLE_CONFIDENCE_THRESHOLD} → human arbitration`
+          : config.ORACLE_AUTO_SUBMIT
+            ? 'cleared the bar (auto-submit will run)'
+            : 'cleared the bar, but ORACLE_AUTO_SUBMIT=false → not submitted on-chain';
     console.log(
-      `🔮 Oracle ${decision.status} — market ${marketId} ` +
-        `(value=${decision.aggregatedValue}, conf=${decision.meanConfidence.toFixed(2)}, ` +
-        `agree=${decision.agreement}, score=${decision.compositeScore.toFixed(2)})`,
+      `🔮 ${icon} Oracle ${decision.status} — market ${marketId}\n` +
+        `   value=${decision.aggregatedValue}, conf=${decision.meanConfidence.toFixed(2)}, ` +
+        `agree=${decision.agreement}, score=${decision.compositeScore.toFixed(2)}\n` +
+        `   reason: ${reason}`,
     );
   }
 

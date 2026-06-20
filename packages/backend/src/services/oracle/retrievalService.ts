@@ -3,33 +3,46 @@
  *
  * Mirrors the paper's design (Kota, arXiv 2605.30802): a SINGLE shared evidence
  * packet is gathered once and handed identically to every resolver agent, which
- * isolates reasoning capability from retrieval quality. Retrieval uses Claude's
- * server-side `web_search` tool; results are temporally constrained to the
- * market's scheduled close (`resolves_at`) to avoid leaking post-close info.
+ * isolates reasoning capability from retrieval quality. Retrieval runs through
+ * OpenRouter using the model's `:online` web-search plugin; the prompt
+ * temporally constrains results to the market's scheduled close (`resolves_at`)
+ * to avoid leaking post-close info.
  *
  * Continuum settles to a scalar `finalPrice`, so the question we research is
  * "what real-world value did the market's underlying settle at" rather than a
  * binary yes/no.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import { config } from '../../config';
 import type { EvidencePacket, EvidenceSource } from './types';
 
-// Retrieval uses the strongest model for query formulation + synthesis. The
-// _20260209 web_search variant (dynamic filtering) requires Opus 4.6+/Sonnet 4.6.
-const RETRIEVAL_MODEL = 'claude-opus-4-8';
+let client: OpenAI | null = null;
 
-let client: Anthropic | null = null;
-
-/** Lazily construct the Anthropic client (key from config or env). */
-export function anthropicClient(): Anthropic {
+/** Lazily construct the OpenRouter (OpenAI-compatible) client. */
+export function openrouterClient(): OpenAI {
   if (!client) {
-    client = config.ANTHROPIC_API_KEY
-      ? new Anthropic({ apiKey: config.ANTHROPIC_API_KEY })
-      : new Anthropic();
+    client = new OpenAI({
+      apiKey: config.OPENROUTER_API_KEY,
+      baseURL: config.OPENROUTER_BASE_URL,
+    });
   }
   return client;
+}
+
+/**
+ * Web-search-enabled model id. OpenRouter's `:online` suffix attaches its web
+ * plugin to any model, returning `url_citation` annotations on the message.
+ */
+function retrievalModel(): string {
+  const base = config.ORACLE_RETRIEVAL_MODEL;
+  return base.endsWith(':online') ? base : `${base}:online`;
+}
+
+// OpenRouter annotates web-grounded answers with url_citation objects.
+interface UrlCitationAnnotation {
+  type: 'url_citation';
+  url_citation: { url?: string; title?: string; content?: string };
 }
 
 /**
@@ -63,13 +76,11 @@ export async function gatherEvidence(params: {
     'a final number yourself — downstream agents do that. Surface the facts.',
   ].join('\n');
 
-  const resp = await anthropicClient().messages.create({
-    model: RETRIEVAL_MODEL,
+  const resp = await openrouterClient().chat.completions.create({
+    model: retrievalModel(),
     max_tokens: 4096,
-    thinking: { type: 'adaptive' },
-    tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 6 }],
-    system,
     messages: [
+      { role: 'system', content: system },
       {
         role: 'user',
         content: `${query}\n\nSearch for and synthesize the authoritative evidence.`,
@@ -77,27 +88,20 @@ export async function gatherEvidence(params: {
     ],
   });
 
-  const sources: EvidenceSource[] = [];
-  let summary = '';
+  const message = resp.choices[0]?.message;
+  const summary = (message?.content ?? '').trim();
 
-  for (const block of resp.content) {
-    if (block.type === 'text') {
-      summary += block.text;
-    } else if (block.type === 'web_search_tool_result') {
-      const content = (block as { content?: unknown }).content;
-      // Error results arrive as a single object; success results as a list.
-      if (Array.isArray(content)) {
-        for (const r of content as Array<Record<string, unknown>>) {
-          if (r.type === 'web_search_result') {
-            sources.push({
-              title: String(r.title ?? ''),
-              url: String(r.url ?? ''),
-              ...(r.page_age ? { publishedDate: String(r.page_age) } : {}),
-              snippet: '',
-            });
-          }
-        }
-      }
+  const sources: EvidenceSource[] = [];
+  const annotations =
+    (message as { annotations?: UrlCitationAnnotation[] } | undefined)
+      ?.annotations ?? [];
+  for (const a of annotations) {
+    if (a.type === 'url_citation' && a.url_citation?.url) {
+      sources.push({
+        title: a.url_citation.title ?? '',
+        url: a.url_citation.url,
+        snippet: a.url_citation.content ?? '',
+      });
     }
   }
 
@@ -108,7 +112,7 @@ export async function gatherEvidence(params: {
     retrievedAt: new Date().toISOString(),
     resolvesAt,
     sources: sources.slice(0, config.ORACLE_MAX_SOURCES),
-    summary: summary.trim(),
+    summary,
   };
 }
 

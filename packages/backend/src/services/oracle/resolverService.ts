@@ -10,14 +10,15 @@
  * market's real-world final value (signed, market units) plus a self-reported
  * confidence and evidence-grounded reasoning.
  *
- * Ensemble is Claude-only by product decision; to claw back the diversity the
- * paper relies on (low error correlation), we span distinct model tiers
- * (Opus / Sonnet / Haiku) rather than N identical calls.
+ * The ensemble runs over OpenRouter (OpenAI-compatible). By default it is a
+ * single DeepSeek-R1 reasoner; configure `ORACLE_MODELS` with several distinct
+ * OpenRouter model ids to recover the cross-model diversity (low error
+ * correlation) the paper relies on.
  */
 
 import { config } from '../../config';
 import type { AgentVote, EvidencePacket } from './types';
-import { anthropicClient, formatEvidence } from './retrievalService';
+import { openrouterClient, formatEvidence } from './retrievalService';
 
 const SYSTEM_PROMPT = [
   'You are an expert prediction-market settlement oracle. You determine the',
@@ -34,22 +35,10 @@ const SYSTEM_PROMPT = [
   '   numeric estimate but lower your confidence accordingly.',
   '5. Rate confidence from 0.0 (very uncertain) to 1.0 (certain).',
   '',
-  'Output: a JSON object with `value` (number), `confidence` (0.0-1.0), and',
-  '`reasoning` (cite the specific sources you used).',
+  'Output ONLY a single JSON object (no markdown, no prose around it) with keys:',
+  '`value` (number), `confidence` (number 0.0-1.0), and `reasoning` (string that',
+  'cites the specific sources you used).',
 ].join('\n');
-
-// Structured output JSON schema. Numeric range constraints are unsupported by
-// structured outputs; we clamp confidence client-side instead.
-const VOTE_SCHEMA = {
-  type: 'object',
-  properties: {
-    value: { type: 'number' },
-    confidence: { type: 'number' },
-    reasoning: { type: 'string' },
-  },
-  required: ['value', 'confidence', 'reasoning'],
-  additionalProperties: false,
-} as const;
 
 interface ParsedVote {
   value: number;
@@ -62,6 +51,26 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
+/**
+ * Extract a JSON vote from a model response. Reasoning models (e.g. DeepSeek-R1)
+ * can wrap or precede the object with text even under json mode, so we fall back
+ * to the first balanced `{…}` block.
+ */
+function parseVote(raw: string): ParsedVote | null {
+  const tryParse = (s: string): ParsedVote | null => {
+    try {
+      const o = JSON.parse(s) as ParsedVote;
+      return o && typeof o.value === 'number' ? o : null;
+    } catch {
+      return null;
+    }
+  };
+  const direct = tryParse(raw.trim());
+  if (direct) return direct;
+  const match = raw.match(/\{[\s\S]*\}/);
+  return match ? tryParse(match[0]) : null;
+}
+
 /** Resolve a market with a single model. Never throws — returns a failure vote. */
 async function resolveWithModel(
   model: string,
@@ -69,24 +78,24 @@ async function resolveWithModel(
 ): Promise<AgentVote> {
   const start = Date.now();
   try {
-    const resp = await anthropicClient().messages.create({
+    const resp = await openrouterClient().chat.completions.create({
       model,
       max_tokens: 4096,
-      thinking: { type: 'adaptive' },
-      system: SYSTEM_PROMPT,
+      response_format: { type: 'json_object' },
       messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
         {
           role: 'user',
           content:
             `${evidenceText}\n\n` +
             'Based ONLY on the evidence above, what is the final settled value? ' +
-            'Respond with value, confidence, and reasoning.',
+            'Respond with a JSON object containing value, confidence, and reasoning.',
         },
       ],
-      output_config: { format: { type: 'json_schema', schema: VOTE_SCHEMA } },
     });
 
-    if (resp.stop_reason === 'refusal') {
+    const message = resp.choices[0]?.message;
+    if (message?.refusal) {
       return {
         model,
         value: null,
@@ -97,14 +106,8 @@ async function resolveWithModel(
       };
     }
 
-    const textBlock = resp.content.find((b) => b.type === 'text');
-    const raw = textBlock && textBlock.type === 'text' ? textBlock.text : '';
-    let parsed: ParsedVote | null = null;
-    try {
-      parsed = raw ? (JSON.parse(raw) as ParsedVote) : null;
-    } catch {
-      parsed = null;
-    }
+    const raw = message?.content ?? '';
+    const parsed = raw ? parseVote(raw) : null;
     if (!parsed || typeof parsed.value !== 'number') {
       return {
         model,
@@ -112,7 +115,7 @@ async function resolveWithModel(
         confidence: 0,
         reasoning: raw.slice(0, 500),
         latencyMs: Date.now() - start,
-        error: 'unparseable structured output',
+        error: 'unparseable model output',
       };
     }
     return {
