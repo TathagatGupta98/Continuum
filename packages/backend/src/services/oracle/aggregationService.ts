@@ -14,8 +14,8 @@
  *
  * Auto-resolution is strict on purpose: a single-model (or same-vendor) ensemble
  * has higher error correlation than a cross-model one, so escalation is the
- * safety net. Configure `ORACLE_MODELS` with several distinct OpenRouter models
- * to lower that correlation.
+ * safety net. Configure `ORACLE_MODELS` with several distinct Groq models to
+ * lower that correlation.
  */
 
 import { config } from '../../config';

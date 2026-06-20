@@ -4,45 +4,94 @@
  * Mirrors the paper's design (Kota, arXiv 2605.30802): a SINGLE shared evidence
  * packet is gathered once and handed identically to every resolver agent, which
  * isolates reasoning capability from retrieval quality. Retrieval runs through
- * OpenRouter using the model's `:online` web-search plugin; the prompt
- * temporally constrains results to the market's scheduled close (`resolves_at`)
- * to avoid leaking post-close info.
+ * GroqCloud using an agentic model with built-in web search (`groq/compound` by
+ * default); the prompt temporally constrains results to the market's scheduled
+ * close (`resolves_at`) to avoid leaking post-close info.
  *
  * Continuum settles to a scalar `finalPrice`, so the question we research is
  * "what real-world value did the market's underlying settle at" rather than a
  * binary yes/no.
  */
 
-import OpenAI from 'openai';
+import Groq from 'groq-sdk';
 import { config } from '../../config';
 import type { EvidencePacket, EvidenceSource } from './types';
 
-let client: OpenAI | null = null;
+let client: Groq | null = null;
 
-/** Lazily construct the OpenRouter (OpenAI-compatible) client. */
-export function openrouterClient(): OpenAI {
+/** Lazily construct the Groq client (shared by retrieval + the ensemble). */
+export function groqClient(): Groq {
   if (!client) {
-    client = new OpenAI({
-      apiKey: config.OPENROUTER_API_KEY,
-      baseURL: config.OPENROUTER_BASE_URL,
+    client = new Groq({
+      apiKey: config.GROQ_API_KEY,
+      ...(config.GROQ_BASE_URL ? { baseURL: config.GROQ_BASE_URL } : {}),
     });
   }
   return client;
 }
 
-/**
- * Web-search-enabled model id. OpenRouter's `:online` suffix attaches its web
- * plugin to any model, returning `url_citation` annotations on the message.
- */
+/** Web-search-enabled retrieval model (agentic; e.g. `groq/compound`). */
 function retrievalModel(): string {
-  const base = config.ORACLE_RETRIEVAL_MODEL;
-  return base.endsWith(':online') ? base : `${base}:online`;
+  return config.ORACLE_RETRIEVAL_MODEL;
 }
 
-// OpenRouter annotates web-grounded answers with url_citation objects.
-interface UrlCitationAnnotation {
-  type: 'url_citation';
-  url_citation: { url?: string; title?: string; content?: string };
+// Groq's agentic (compound) models surface the searches they ran under
+// `message.executed_tools`. The exact shape isn't strongly typed by the SDK, so
+// we defensively pull title/url/snippet out of whatever the tool returned.
+interface ExecutedTool {
+  type?: string;
+  // Compound returns search hits either as a structured array or a JSON string.
+  search_results?: { results?: RawSearchResult[] } | RawSearchResult[];
+  output?: unknown;
+}
+
+interface RawSearchResult {
+  title?: string;
+  url?: string;
+  link?: string;
+  content?: string;
+  snippet?: string;
+  date?: string;
+  published_date?: string;
+}
+
+/** Coerce one raw search hit into our EvidenceSource shape. */
+function toSource(r: RawSearchResult): EvidenceSource | null {
+  const url = r.url ?? r.link;
+  if (!url) return null;
+  return {
+    title: r.title ?? '',
+    url,
+    snippet: r.content ?? r.snippet ?? '',
+    ...(r.date || r.published_date ? { publishedDate: r.date ?? r.published_date } : {}),
+  };
+}
+
+/** Pull every web-search hit out of a compound message's executed_tools. */
+function extractSources(executedTools: ExecutedTool[]): EvidenceSource[] {
+  const sources: EvidenceSource[] = [];
+  for (const tool of executedTools) {
+    let raw: RawSearchResult[] = [];
+    const sr = tool.search_results;
+    if (Array.isArray(sr)) {
+      raw = sr;
+    } else if (sr && Array.isArray(sr.results)) {
+      raw = sr.results;
+    } else if (typeof tool.output === 'string') {
+      // Some tool outputs arrive as a JSON string; parse best-effort.
+      try {
+        const parsed = JSON.parse(tool.output) as { results?: RawSearchResult[] };
+        if (Array.isArray(parsed.results)) raw = parsed.results;
+      } catch {
+        /* not JSON — ignore */
+      }
+    }
+    for (const r of raw) {
+      const s = toSource(r);
+      if (s) sources.push(s);
+    }
+  }
+  return sources;
 }
 
 /**
@@ -63,8 +112,8 @@ export async function gatherEvidence(params: {
 
   const system = [
     'You are an evidence-gathering researcher for a prediction-market settlement',
-    'oracle. Your job is to find authoritative, primary sources establishing the',
-    'real-world outcome of the question — official results, government data,',
+    'oracle. Use web search to find authoritative, primary sources establishing',
+    'the real-world outcome of the question — official results, government data,',
     'exchange/price data, reputable reporting.',
     '',
     `TEMPORAL CONSTRAINT: the market closed on ${resolveDateIso}. Only rely on`,
@@ -76,7 +125,7 @@ export async function gatherEvidence(params: {
     'a final number yourself — downstream agents do that. Surface the facts.',
   ].join('\n');
 
-  const resp = await openrouterClient().chat.completions.create({
+  const resp = await groqClient().chat.completions.create({
     model: retrievalModel(),
     max_tokens: 4096,
     messages: [
@@ -91,19 +140,9 @@ export async function gatherEvidence(params: {
   const message = resp.choices[0]?.message;
   const summary = (message?.content ?? '').trim();
 
-  const sources: EvidenceSource[] = [];
-  const annotations =
-    (message as { annotations?: UrlCitationAnnotation[] } | undefined)
-      ?.annotations ?? [];
-  for (const a of annotations) {
-    if (a.type === 'url_citation' && a.url_citation?.url) {
-      sources.push({
-        title: a.url_citation.title ?? '',
-        url: a.url_citation.url,
-        snippet: a.url_citation.content ?? '',
-      });
-    }
-  }
+  const executedTools =
+    (message as { executed_tools?: ExecutedTool[] } | undefined)?.executed_tools ?? [];
+  const sources = extractSources(executedTools);
 
   return {
     marketId,

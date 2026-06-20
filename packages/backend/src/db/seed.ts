@@ -5,10 +5,18 @@
  *
  * Flow:
  *   1. Connect to a Sui full node.
- *   2. Discover every market from the package's `MarketCreated` events
+ *   2. WIPE the Market/Position/OracleResolution tables, so the database is
+ *      fully reconstructed from chain on every run (the chain is the single
+ *      source of truth; nothing persists across restarts but the schema). This
+ *      is why excluded markets disappear cleanly — there are no stale rows to
+ *      leave behind.
+ *   3. Discover every market from the package's `MarketCreated` events
  *      (the shared `Registry` mirrors the same set).
- *   3. For each market: read μ/σ/σ_min/liquidity from the `Market<T>` object and
- *      its collateral type, then upsert into Prisma.
+ *   4. For each non-excluded market: read μ/σ/σ_min/liquidity from the
+ *      `Market<T>` object and its collateral type, then write it into Prisma.
+ *
+ * Trade positions are reconstructed separately by `pnpm db:backfill` (run right
+ * after this in the `start` flow), which replays on-chain `TradeExecuted` logs.
  *
  * Curated titles below override the on-chain title for known market ids; the
  * frontend's PATCH /metadata route can also set them at runtime.
@@ -28,6 +36,19 @@ async function seed() {
   console.log('🌱 Starting database seed (Sui)...\n');
 
   const client = new SuiClient({ url: config.SUI_RPC_URL });
+
+  // ─── Wipe the DB so it is rebuilt purely from chain ───
+  // Order matters: Position/OracleResolution reference Market (no cascade in the
+  // schema). The User table is left intact (chain-address keyed, no stale state).
+  const [delPos, delOracle, delMarkets] = await prisma.$transaction([
+    prisma.position.deleteMany({}),
+    prisma.oracleResolution.deleteMany({}),
+    prisma.market.deleteMany({}),
+  ]);
+  console.log(
+    `🧹 Wiped DB — ${delMarkets.count} market(s), ${delPos.count} position(s), ` +
+      `${delOracle.count} oracle row(s)\n`,
+  );
 
   // ─── Discover markets from MarketCreated events ───
   const created: Array<{ marketId: string; objectId: string; title: string }> = [];

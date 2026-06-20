@@ -29,9 +29,11 @@
 > Systems for Prediction Market Resolution* (arXiv 2605.30802). It gathers a shared evidence
 > packet, runs an **independent LLM ensemble** over it, **confidence-weighted aggregates**
 > the result, and either **auto-submits `set_final_price`** on-chain or **escalates to human
-> arbitration**. The ensemble runs over **OpenRouter** (OpenAI-compatible gateway) and defaults
-> to **DeepSeek-R1** (`deepseek/deepseek-r1`); `ORACLE_MODELS` can list several distinct
-> OpenRouter models for cross-model diversity. It is **gated off by default**
+> arbitration**. The ensemble runs over **GroqCloud** (via the `groq-sdk`) as a swarm of
+> parallel sub-agents; `ORACLE_MODELS` defaults to a diverse Groq set
+> (`llama-3.3-70b-versatile`, `meta-llama/llama-4-scout-17b-16e-instruct`, `openai/gpt-oss-120b`,
+> `openai/gpt-oss-20b`) for cross-model diversity, and retrieval uses Groq's agentic
+> `groq/compound-mini` (built-in web search). It is **gated off by default**
 > (`ORACLE_ENABLED=false`); see *AI Oracle (settlement layer)* below. This is the backend that
 > *drives* the existing manual on-chain resolution entry points — the contracts are unchanged.
 
@@ -72,7 +74,7 @@ Where μ (mu) is the market's expected value (mean) and σ (sigma) is the market
 | Smart Contracts | **Sui Move** (`edition = 2024.beta`), Sui framework (`framework/testnet`) — one `continuum` package |
 | Monorepo | pnpm workspaces (JS packages) + a standalone Move package |
 | Backend API | Node.js, TypeScript, Express 5, Socket.io, `@mysten/sui` |
-| AI oracle | `openai` SDK → **OpenRouter** — multi-agent LLM ensemble (default DeepSeek-R1) for settlement (arXiv 2605.30802) |
+| AI oracle | `groq-sdk` → **GroqCloud** — multi-agent LLM ensemble (Llama/GPT-OSS sub-agents) for settlement (arXiv 2605.30802) |
 | Database | Prisma ORM (SQLite for local dev, PostgreSQL in production) |
 | Indexer | Sui event poller — RPC polling of the package's Move events via `@mysten/sui` |
 | Frontend | React + TypeScript + Vite + Tailwind + d3 — wallet/tx layer on `@mysten/dapp-kit` + `@mysten/sui` (PTBs) |
@@ -335,8 +337,8 @@ Single TypeScript stack — Express 5 + Socket.io + Prisma + `@mysten/sui`.
 - **`mathService.ts`** — Gaussian CDF via jStat for off-chain price preview; the math is identical
   to `gaussian.move`.
 - **`oracle/` (AI settlement oracle)** — `retrievalService.ts` (shared, date-constrained evidence via
-  OpenRouter's `:online` web-search plugin; exports the shared `openrouterClient`), `resolverService.ts`
-  (independent OpenRouter/DeepSeek ensemble, JSON-object output with a balanced-`{…}` fallback parser),
+  Groq's agentic `groq/compound-mini` web search; exports the shared `groqClient`), `resolverService.ts`
+  (independent Groq ensemble — one sub-agent per `ORACLE_MODELS` id, JSON-object output with a balanced-`{…}` fallback parser),
   `aggregationService.ts` (confidence-weighted aggregate + agreement + escalation score),
   `oracleService.ts` (orchestrator + keeper worker), `types.ts` (local copy of the shared oracle
   shapes). `chainService.ts` also gained the **signing path** (`submitFinalPrice`, `getResolvesAt`,
@@ -361,10 +363,12 @@ via persuasive error propagation).
 1. **Scalar estimation** — Continuum settles to one `finalPrice`, so each agent estimates the
    real-world value at `resolves_at` (signed, market units); the aggregate maps directly to
    `market::set_final_price`. (Not per-strike binary like the paper.)
-2. **OpenRouter ensemble (default DeepSeek-R1)** — the ensemble runs over OpenRouter and defaults
-   to a single `deepseek/deepseek-r1` reasoner; `ORACLE_MODELS` can list several distinct OpenRouter
-   model ids to span vendors/tiers and decorrelate errors. The paper's caveat is that single-model /
-   same-vendor ensembles have higher error correlation, so escalation thresholds are kept strict.
+2. **Groq sub-agent swarm** — the ensemble runs over GroqCloud (`groq-sdk`); each `ORACLE_MODELS`
+   id is one sub-agent dispatched in parallel over the same evidence. The default is a cross-family
+   Groq set (`llama-3.3-70b-versatile`, `meta-llama/llama-4-scout-17b-16e-instruct`,
+   `openai/gpt-oss-120b`, `openai/gpt-oss-20b`) chosen to decorrelate errors while clearing Groq's
+   free-tier per-model TPM caps. The paper's caveat is that single-model / same-vendor ensembles have
+   higher error correlation, so escalation thresholds are kept strict.
 3. **Immediate `set_final_price`** on auto-resolve (no two-phase timelock) — irreversible, hence
    strict thresholds + the escalation safety net.
 
@@ -378,17 +382,20 @@ human; zero usable estimates → `FAILED`. `compositeScore = 1[agreement] + mean
 must be the market owner) → `SUBMITTED`; the event poller then writes `Market.finalPrice` from
 `MarketResolved`, and bettor positions settle per-position via `claim_winnings` as usual.
 
-**Env (all in `config.ts`/`.env`, oracle off by default):** `ORACLE_ENABLED`, `OPENROUTER_API_KEY`,
-`OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`), `ORACLE_RETRIEVAL_MODEL` (default
-`deepseek/deepseek-r1`; `:online` appended automatically for web search), `ORACLE_MODELS` (default
-`deepseek/deepseek-r1`), `ORACLE_POLL_INTERVAL_MS`, `ORACLE_CONFIDENCE_THRESHOLD`,
+**Env (all in `config.ts`/`.env`, oracle off by default):** `ORACLE_ENABLED`, `GROQ_API_KEY`,
+`GROQ_BASE_URL` (optional; unset → groq-sdk default), `ORACLE_RETRIEVAL_MODEL` (default
+`groq/compound-mini`, an agentic model with built-in web search), `ORACLE_MODELS` (default the
+four-model Groq set above), `ORACLE_POLL_INTERVAL_MS`, `ORACLE_CONFIDENCE_THRESHOLD`,
 `ORACLE_AGREEMENT_TOLERANCE`, `ORACLE_AUTO_SUBMIT`, `ORACLE_SIGNER_KEY`, `ORACLE_MAX_SOURCES`.
 
-**Notes / constraints:** the resolver requests OpenRouter's `response_format: { type: 'json_object' }`
+**Notes / constraints:** the resolver requests Groq's `response_format: { type: 'json_object' }`
 (plain JSON mode, not a JSON schema) and parses the result with a balanced-`{…}` fallback, because
-reasoning models like DeepSeek-R1 can wrap/precede the object with prose even under JSON mode.
-Retrieval reads OpenRouter's `url_citation` annotations (not Anthropic `web_search` result blocks)
-to build the evidence sources. Oracle types are mirrored in `packages/types` but the backend uses a
+reasoning-style models can wrap/precede the object with prose even under JSON mode. Retrieval reads
+the search hits Groq's compound system exposes under `message.executed_tools` to build the evidence
+sources. The heavier `groq/compound` retrieval model injects full fetched pages and can exceed the
+free-tier per-request token cap, so `groq/compound-mini` is the default; likewise low-TPM models
+(e.g. `qwen/*`, `llama-3.1-8b-instant`) can 413 on a full evidence packet under the free tier — a
+per-agent failure the aggregator tolerates (it drops the vote, quorum is ≥2). Oracle types are mirrored in `packages/types` but the backend uses a
 **local `oracle/types.ts`** because its tsconfig `rootDir: ./src` rejects cross-package source
 imports (TS6059). Still TODO: a KalshiBench-style eval harness to calibrate thresholds, and a live
 end-to-end run.

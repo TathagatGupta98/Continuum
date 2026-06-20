@@ -13,15 +13,15 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
+    "groq-sdk": "^0.36.0",
     "helmet": "^8.2.0",
     "jstat": "^1.9.6",
-    "openai": "^4.104.0",
     "pg": "^8.21.0",
     "socket.io": "^4.8.3",
     "zod": "^3.25.67"
   },
   "scripts": {
-    "start": "pnpm db:push && pnpm db:seed && pnpm start:api",
+    "start": "pnpm db:push && pnpm db:seed && pnpm db:backfill && pnpm start:api",
     "start:api": "tsx src/server.ts",
     "db:seed": "tsx src/db/seed.ts",
     "db:backfill": "tsx src/db/backfill.ts",

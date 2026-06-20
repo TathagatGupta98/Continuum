@@ -10,15 +10,14 @@
  * market's real-world final value (signed, market units) plus a self-reported
  * confidence and evidence-grounded reasoning.
  *
- * The ensemble runs over OpenRouter (OpenAI-compatible). By default it is a
- * single DeepSeek-R1 reasoner; configure `ORACLE_MODELS` with several distinct
- * OpenRouter model ids to recover the cross-model diversity (low error
- * correlation) the paper relies on.
+ * The ensemble runs over GroqCloud. Each configured `ORACLE_MODELS` id is one
+ * "sub-agent" dispatched in parallel; the default is a diverse, cross-family set
+ * of Groq models, which recovers the low error correlation the paper relies on.
  */
 
 import { config } from '../../config';
 import type { AgentVote, EvidencePacket } from './types';
-import { openrouterClient, formatEvidence } from './retrievalService';
+import { groqClient, formatEvidence } from './retrievalService';
 
 const SYSTEM_PROMPT = [
   'You are an expert prediction-market settlement oracle. You determine the',
@@ -52,9 +51,9 @@ function clamp01(n: number): number {
 }
 
 /**
- * Extract a JSON vote from a model response. Reasoning models (e.g. DeepSeek-R1)
- * can wrap or precede the object with text even under json mode, so we fall back
- * to the first balanced `{…}` block.
+ * Extract a JSON vote from a model response. Reasoning-style models can wrap or
+ * precede the object with text even under json mode, so we fall back to the
+ * first balanced `{…}` block.
  */
 function parseVote(raw: string): ParsedVote | null {
   const tryParse = (s: string): ParsedVote | null => {
@@ -78,7 +77,7 @@ async function resolveWithModel(
 ): Promise<AgentVote> {
   const start = Date.now();
   try {
-    const resp = await openrouterClient().chat.completions.create({
+    const resp = await groqClient().chat.completions.create({
       model,
       max_tokens: 4096,
       response_format: { type: 'json_object' },
@@ -95,17 +94,6 @@ async function resolveWithModel(
     });
 
     const message = resp.choices[0]?.message;
-    if (message?.refusal) {
-      return {
-        model,
-        value: null,
-        confidence: 0,
-        reasoning: '',
-        latencyMs: Date.now() - start,
-        error: 'refusal',
-      };
-    }
-
     const raw = message?.content ?? '';
     const parsed = raw ? parseVote(raw) : null;
     if (!parsed || typeof parsed.value !== 'number') {

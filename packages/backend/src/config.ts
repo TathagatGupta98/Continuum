@@ -80,27 +80,36 @@ const envSchema = z.object({
     .optional()
     .default('false')
     .transform((s) => s === 'true' || s === '1'),
-  // OpenRouter API key for the LLM ensemble (OpenAI-compatible gateway). Required
-  // when the oracle is enabled; kept here so misconfig fails fast.
-  OPENROUTER_API_KEY: z.string().optional().default(''),
-  // OpenRouter base URL (OpenAI-compatible). Override only for proxies/mocks.
-  OPENROUTER_BASE_URL: z
+  // Groq API key for the LLM ensemble (GroqCloud). Required when the oracle is
+  // enabled; kept here so misconfig fails fast.
+  GROQ_API_KEY: z.string().optional().default(''),
+  // Groq API base URL (OpenAI-compatible endpoint). Override only for
+  // proxies/mocks; when unset the groq-sdk default is used.
+  GROQ_BASE_URL: z
     .string()
-    .url({ message: 'OPENROUTER_BASE_URL must be a valid URL' })
-    .default('https://openrouter.ai/api/v1'),
-  // OpenRouter model used for evidence retrieval. The `:online` web-search plugin
-  // is appended automatically so the retriever can browse for primary sources.
+    .url({ message: 'GROQ_BASE_URL must be a valid URL' })
+    .optional(),
+  // Groq model used for evidence retrieval. Defaults to the agentic
+  // `groq/compound-mini` system, which has built-in web search so the retriever
+  // can browse for primary sources and return cited results. (The heavier
+  // `groq/compound` injects full fetched pages and can exceed the free-tier
+  // per-request token cap; `-mini` stays well within it.)
   ORACLE_RETRIEVAL_MODEL: z
     .string()
     .optional()
-    .default('deepseek/deepseek-r1'),
-  // Comma-separated OpenRouter model ids forming the ensemble. Defaults to a
-  // single DeepSeek-R1 reasoner; add more (comma-separated) for cross-model
-  // diversity (lower error correlation per the paper).
+    .default('groq/compound-mini'),
+  // Comma-separated Groq model ids forming the ensemble — the "sub-agents". Each
+  // runs the same evidence packet independently and in parallel. Defaults to a
+  // diverse, cross-family set to decorrelate errors (lower error correlation per
+  // the paper). These four clear Groq's free-tier per-model TPM caps for a
+  // typical evidence packet; add more ids (e.g. qwen/*) on a higher Groq tier to
+  // scale the swarm and widen vendor diversity.
   ORACLE_MODELS: z
     .string()
     .optional()
-    .default('deepseek/deepseek-r1')
+    .default(
+      'llama-3.3-70b-versatile,meta-llama/llama-4-scout-17b-16e-instruct,openai/gpt-oss-120b,openai/gpt-oss-20b',
+    )
     .transform((s) => s.split(',').map((v) => v.trim()).filter(Boolean)),
   // Milliseconds between resolution-worker passes (scans for closed markets).
   ORACLE_POLL_INTERVAL_MS: z
