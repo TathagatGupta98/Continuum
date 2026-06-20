@@ -10,6 +10,19 @@ import { floatToWad } from '@/lib/math'
 
 export type CreateStep = 'idle' | 'submitting' | 'confirmed' | 'error'
 
+/** Parse a 0x-prefixed hex string into bytes; empty/undefined → empty array. */
+function hexToBytes(hex?: string): Uint8Array {
+  if (!hex) return new Uint8Array(0)
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
+  if (clean.length === 0) return new Uint8Array(0)
+  if (clean.length % 2 !== 0) throw new Error('Invalid hex string')
+  const out = new Uint8Array(clean.length / 2)
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
+  }
+  return out
+}
+
 export function useCreateMarket() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -24,6 +37,10 @@ export function useCreateMarket() {
       sigmaMin: number,
       resolvesAtMs: number,
       meta?: { title: string; category?: string },
+      // Optional Pyth price-feed id (0x-prefixed 32-byte hex). When set, the
+      // market settles trustlessly via `resolve_with_pyth` against this feed;
+      // empty → a manual market (`set_final_price` / two-phase).
+      priceFeedId?: string,
     ) => {
       if (!account) return
       setError(undefined)
@@ -37,9 +54,13 @@ export function useCreateMarket() {
         }
         setStep('submitting')
         const titleBytes = Array.from(new TextEncoder().encode(meta?.title ?? ''))
+        const feedBytes = hexToBytes(priceFeedId)
+        if (feedBytes.length !== 0 && feedBytes.length !== 32) {
+          throw new Error('Pyth price-feed id must be a 0x-prefixed 32-byte hex string')
+        }
 
         const tx = new Transaction()
-        // create_market<T>(registry, title: vector<u8>, sigma_min_mag, resolves_at)
+        // create_market<T>(registry, title: vector<u8>, sigma_min_mag, resolves_at, price_feed_id)
         tx.moveCall({
           target: target('create_market'),
           typeArguments: [COLLATERAL_TYPE],
@@ -48,6 +69,7 @@ export function useCreateMarket() {
             tx.pure.vector('u8', titleBytes),
             tx.pure.u256(floatToWad(sigmaMin)),
             tx.pure.u64(BigInt(resolvesAt)),
+            tx.pure.vector('u8', Array.from(feedBytes)),
           ],
         })
 

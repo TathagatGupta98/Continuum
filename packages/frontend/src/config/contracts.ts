@@ -10,15 +10,15 @@ import { marketTarget, MARKET_MODULE } from '@omnicurve/types'
  */
 export const PACKAGE_ID =
   (import.meta.env.VITE_PACKAGE_ID as string) ??
-  '0x8c80c6ea53152d99206fccf8b1fb18a302ea9acf68f19e0fd5664bb0339ac599'
+  '0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549'
 
 export const REGISTRY_ID =
   (import.meta.env.VITE_REGISTRY_ID as string) ??
-  '0x2080474707e00e222decf87a8a544a9bcfbe3295facaf39bc6bc900887609e1c'
+  '0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23'
 
 export const COLLATERAL_TYPE =
   (import.meta.env.VITE_COLLATERAL_TYPE as string) ??
-  '0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC'
+  '0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549::mock_usdc::MOCK_USDC'
 
 /** The shared `Clock` object — required by every resolution entry function. */
 export const CLOCK_ID = '0x6'

@@ -7,6 +7,11 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { useCreateMarket } from '@/hooks/useCreateMarket'
 import { formatTxError, isUserRejection } from '@/lib/errors'
+import { PYTH_FEED_IDS } from '@omnicurve/types'
+
+// A market can optionally bind to a Pyth price feed; when set it settles
+// trustlessly on-chain (`resolve_with_pyth`) instead of via a manual/AI oracle.
+const PRICE_FEEDS = ['none', ...Object.keys(PYTH_FEED_IDS)] as const
 
 const schema = z.object({
   title: z.string().min(4, 'Title must be at least 4 characters'),
@@ -23,6 +28,8 @@ const schema = z.object({
       const t = new Date(v).getTime()
       return Number.isFinite(t) && t > Date.now()
     }, 'Resolution time must be in the future'),
+  // Pyth price feed to settle against, or "none" for a manual/AI-oracle market.
+  priceFeed: z.enum(PRICE_FEEDS).default('none'),
 })
 
 type FormValues = z.infer<typeof schema>
@@ -57,7 +64,12 @@ export function CreateMarketModal({ open, onClose }: CreateMarketModalProps) {
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { category: 'Crypto', sigmaMin: 1000, resolvesAt: DEFAULT_RESOLVES_AT },
+    defaultValues: {
+      category: 'Crypto',
+      sigmaMin: 1000,
+      resolvesAt: DEFAULT_RESOLVES_AT,
+      priceFeed: 'none',
+    },
   })
 
   const isSubmitting = step === 'submitting'
@@ -71,10 +83,16 @@ export function CreateMarketModal({ open, onClose }: CreateMarketModalProps) {
   // Step 2: the user confirmed on the review screen — fire the transaction.
   const onConfirm = async () => {
     if (!review) return
-    await create(review.sigmaMin, new Date(review.resolvesAt).getTime(), {
-      title: review.title,
-      category: review.category,
-    })
+    const feedId =
+      review.priceFeed && review.priceFeed !== 'none'
+        ? PYTH_FEED_IDS[review.priceFeed as keyof typeof PYTH_FEED_IDS]
+        : undefined
+    await create(
+      review.sigmaMin,
+      new Date(review.resolvesAt).getTime(),
+      { title: review.title, category: review.category },
+      feedId,
+    )
   }
 
   const handleClose = () => {
@@ -126,6 +144,15 @@ export function CreateMarketModal({ open, onClose }: CreateMarketModalProps) {
             <ReviewRow
               label="Resolution Time"
               value={new Date(review.resolvesAt).toLocaleString()}
+              mono
+            />
+            <ReviewRow
+              label="Settlement"
+              value={
+                review.priceFeed && review.priceFeed !== 'none'
+                  ? `Pyth · ${review.priceFeed}`
+                  : 'Manual / AI oracle'
+              }
               mono
             />
           </div>
@@ -199,6 +226,27 @@ export function CreateMarketModal({ open, onClose }: CreateMarketModalProps) {
           <p className="text-xs font-mono text-[rgba(35,24,18,0.35)] -mt-2">
             Scheduled close — resolution functions can only be called after this time. Fixed at
             creation and cannot be changed later.
+          </p>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-display tracking-wider text-[rgba(35,24,18,0.45)] uppercase">
+              Pyth Price Feed
+            </label>
+            <select
+              className="bg-[rgba(62,44,30,0.04)] border border-[rgba(62,44,30,0.08)] text-[#231812] text-sm rounded py-2.5 px-3 focus:outline-none focus:border-[rgba(200,16,46,0.5)] transition-colors"
+              {...register('priceFeed')}
+            >
+              <option value="none">None — manual / AI oracle</option>
+              {Object.keys(PYTH_FEED_IDS).map((feed) => (
+                <option key={feed} value={feed}>
+                  {feed}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="text-xs font-mono text-[rgba(35,24,18,0.35)] -mt-2">
+            Bind a Pyth feed to settle this market trustlessly on-chain after close. Leave as
+            “None” for non-price markets (resolved manually or by the AI oracle).
           </p>
 
           <div className="flex gap-3 pt-2">

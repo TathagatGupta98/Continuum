@@ -232,10 +232,12 @@ Steps: `idle | accepting | seeding | submitting | confirmed | error` (`approving
 parity; seeding+deposit being atomic means the button shows `seeding` then `confirmed`).
 
 ### `useCreateMarket()`
-`create_market<T>(registry, title: vector<u8>, sigma_min_mag: u256, resolves_at: u64)`:
-1. Build PTB; `title` as UTF-8 `vector<u8>`, `sigma_min` as WAD, `resolves_at` defaulted to
-   **now + 1 year** (ms) — the modal only asks for σ-min, but `resolves_at` is mandatory and
-   immutable, and every resolution path is gated on it.
+`create_market<T>(registry, title: vector<u8>, sigma_min_mag: u256, resolves_at: u64, price_feed_id: vector<u8>)`:
+1. Build PTB; `title` as UTF-8 `vector<u8>`, `sigma_min` as WAD, `resolves_at` mandatory/immutable,
+   and `price_feed_id` an optional 0x-hex Pyth feed id parsed to `vector<u8>` (empty = manual
+   market). `create(sigmaMin, resolvesAtMs, meta?, priceFeedId?)` — the `CreateMarketModal` "Pyth
+   Price Feed" dropdown maps a selection to a feed id from `PYTH_FEED_IDS` (`@omnicurve/types`).
+   A market bound to a feed settles trustlessly via `market::resolve_with_pyth` after close.
 2. Wait with `showEvents: true`; pull `market_id` from the `MarketCreated` event.
 3. `api.updateMarketMetadata(marketId, { title, category })` (retried; non-fatal) so the
    market shows its question + category instead of "Market #N".
@@ -350,10 +352,12 @@ batches accept (if pending) + `set_distribution` + `add_liquidity` into one PTB 
 hacks (the EVM build's `pending_owner @0x1` / `sigma_min @0x4` reads are gone).
 
 ### Settlement & claiming (per-position, real-world price)
-Settlement records an externally-observed **final price** (manual; no oracle); win/lose is
-decided **per `Position`**, not a single winning side:
+Settlement records an externally-observed **final price**; win/lose is decided **per `Position`**,
+not a single winning side:
 - YES (`ABOVE`) wins iff `finalPrice ≥ strike`; NO (`BELOW`) wins iff `finalPrice < strike`.
-- Owner: `set_final_price` (immediate) or `propose_resolution → execute_resolution` (24h
+- **Pyth (trustless, price markets):** `resolve_with_pyth` reads the bound Pyth feed on-chain —
+  permissionless, driven by the backend keeper today (a frontend "Resolve via Pyth" button is TODO).
+- Manual: owner `set_final_price` (immediate) or `propose_resolution → execute_resolution` (24h
   timelock); both require `now ≥ resolves_at` and the shared `Clock` (`CLOCK_ID = 0x6`).
 - `claim_winnings<T>(market, position)` consumes the owned `Position` object (pass its id).
 - `release_losing_collateral` is permissionless post-resolution.
@@ -374,9 +378,9 @@ heuristics. `isUserRejection` detects wallet declines so they render neutrally.
 ```
 VITE_API_BASE_URL=                # empty → Vite proxies /api + /socket.io to :3001
 VITE_SUI_NETWORK=testnet
-VITE_PACKAGE_ID=0x8c80c6ea53152d99206fccf8b1fb18a302ea9acf68f19e0fd5664bb0339ac599
-VITE_REGISTRY_ID=0x2080474707e00e222decf87a8a544a9bcfbe3295facaf39bc6bc900887609e1c
-VITE_COLLATERAL_TYPE=0x8c80c6…::mock_usdc::MOCK_USDC
+VITE_PACKAGE_ID=0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549
+VITE_REGISTRY_ID=0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23
+VITE_COLLATERAL_TYPE=0x76ab32…::mock_usdc::MOCK_USDC
 ```
 
 ---
