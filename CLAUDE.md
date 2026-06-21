@@ -17,7 +17,15 @@
 > - `REGISTRY_ID` (shared) = `0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23`
 > - `Market #0` (shared) = `0x77550db6ff83d512ca2763d8af9d6aaee13ba8364e5c83755d66d446a90ea0dc`
 > - `TreasuryCap<MOCK_USDC>` (owned) = `0x8029f5ce4f72340d8ac3dc1ae0aee28b749cdf763ea3ee06023ec2db95d7923d`
-> - `COLLATERAL_TYPE` = `0x76ab32...::mock_usdc::MOCK_USDC`
+> - `COLLATERAL_TYPE` (default for new markets, updated 2026-06-21) =
+>   `0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC` — Circle's
+>   official testnet USDC (6 decimals, same as `MOCK_USDC`). Anyone can fund it via
+>   faucet.circle.com or `sui client faucet --coin-type usdc`, no protocol-controlled
+>   `TreasuryCap` mint required. `Market #0` above predates this switch and is permanently
+>   pinned to `MOCK_USDC` (`T` is immutable per market); only markets created *after* this change
+>   default to real testnet USDC. Per-market trading/LP/resolution always reads the market's own
+>   `collateralType` from chain, so old and new markets coexist fine — only the
+>   `create_market` default (frontend `useCreateMarket` / `COLLATERAL_TYPE` env) changed.
 >
 > **Backend env (Sui):** `SUI_RPC_URL`, `PACKAGE_ID`, `REGISTRY_ID`, `COLLATERAL_TYPE`
 > (replaces the old `RPC_URL` + `FACTORY/AMM/ROUTER/USDC` addresses), plus the Pyth settlement
@@ -308,10 +316,12 @@ sui client publish --gas-budget 200000000
 
 `init` runs at publish: it creates and shares the `Registry`, and (since `mock_usdc` is included)
 mints the `TreasuryCap<MOCK_USDC>` to the publisher. After publishing, record the **package
-ID**, the **`Registry` object ID**, and (for local testing) the **`TreasuryCap` object ID**, and
-put them in `packages/backend/.env` (`PACKAGE_ID` / `REGISTRY_ID` / `COLLATERAL_TYPE`). Then
-create at least one market (`market::create_market<T>`) so the backend seed has something to
-index. The current testnet IDs are already in the backend `.env`.
+ID** and the **`Registry` object ID**, and put them in `packages/backend/.env` (`PACKAGE_ID` /
+`REGISTRY_ID`). For `COLLATERAL_TYPE`, prefer Circle's real testnet USDC type (see the
+migration-status block) so any wallet can fund itself from a public faucet; only fall back to
+the freshly-minted `mock_usdc::MOCK_USDC` (and its `TreasuryCap` object ID) for local testing
+where you control the mint. Then create at least one market (`market::create_market<T>`) so the
+backend seed has something to index. The current testnet IDs are already in the backend `.env`.
 
 > **Legacy (Arbitrum Sepolia) addresses** for the old Stylus deployment live only in the git
 > history now (they have been removed from the README and root config). They are **obsolete** for
@@ -586,5 +596,7 @@ pnpm --filter @omnicurve/frontend build            # tsc + vite build
    (`market_count` / `get_market` / `market_exists`). Collateral is the generic type `T`, so
    there is no token-address wiring to do.
 
-9. **Generic collateral**: `Market<phantom T>` works with any `Coin<T>`. Use `mock_usdc::MOCK_USDC`
-   locally and the real USDC coin type on testnet/mainnet.
+9. **Generic collateral**: `Market<phantom T>` works with any `Coin<T>`. The frontend/backend
+   default (`COLLATERAL_TYPE`) is Circle's real testnet USDC so anyone can fund a wallet from a
+   public faucet; `mock_usdc::MOCK_USDC` remains available (and still backs `Market #0`) for
+   local testing where a protocol-controlled mint is preferable.

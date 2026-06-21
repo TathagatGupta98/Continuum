@@ -1,11 +1,10 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useCurrentAccount, useSignAndExecuteTransaction } from '@mysten/dapp-kit'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Transaction } from '@mysten/sui/transactions'
 import { useMarket } from '@/hooks/useMarket'
 import { useMarketSocket } from '@/hooks/useMarketSocket'
-import { usePortfolio } from '@/hooks/usePortfolio'
 import { useSpotPrice, detectSpotSymbol } from '@/hooks/useSpotPrice'
 import { useTheme } from '@/hooks/useTheme'
 import { GaussianChart } from '@/components/market/GaussianChart'
@@ -14,10 +13,21 @@ import { LPPanel } from '@/components/market/LPPanel'
 import { Tabs } from '@/components/ui/Tabs'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import { shortAddr } from '@/lib/math'
-import { getMarketOwner } from '@/lib/sui'
+import { shortAddr, floatToWad, floatToWadParts } from '@/lib/math'
+import { getMarketOwner, getMarketPythState, getOwnedPositions, suiClient } from '@/lib/sui'
+import { api } from '@/lib/api'
+import { formatTxError, isUserRejection } from '@/lib/errors'
+import { useToast } from '@/components/ui/Toast'
 import { target } from '@/config/contracts'
 import { explorerUrl } from '@/config/sui'
+import { PYTH_FEED_IDS } from '@omnicurve/types'
+
+/** Map a bound feed id back to its human label (e.g. "BTC/USD"). */
+function feedLabel(feedId?: string): string | undefined {
+  if (!feedId) return undefined
+  const want = feedId.toLowerCase()
+  return Object.entries(PYTH_FEED_IDS).find(([, id]) => id.toLowerCase() === want)?.[0]
+}
 
 const TRADE_TABS = [
   { label: 'Trade', value: 'trade' },
@@ -91,12 +101,31 @@ export default function MarketDetail() {
 
   const { data: market, isLoading, error } = useMarket(marketId)
   const { liveState, isResolved: socketResolved } = useMarketSocket(marketId)
-  const { data: portfolio } = usePortfolio(address)
   const spotSymbol = detectSpotSymbol(market?.title)
   const { spotUsd } = useSpotPrice(spotSymbol)
   const [activeTab, setActiveTab] = useState('trade')
   const [strikeX, setStrikeX] = useState<number | undefined>()
   const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction()
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+
+  // Per-position id currently being claimed (disables that button + shows spinner;
+  // multiple winning positions each render their own claim button).
+  const [claimingId, setClaimingId] = useState<string | null>(null)
+  // Post-resolution LP withdrawal (liquidity + accrued fees) in flight.
+  const [lpClaiming, setLpClaiming] = useState(false)
+
+  // Pyth settlement state: whether the market binds a price feed and has closed.
+  // Drives the "Resolve via Pyth" trustless-settlement button below.
+  const { data: pythState } = useQuery({
+    queryKey: ['market-pyth-state', market?.objectId],
+    enabled: !!market?.objectId,
+    staleTime: 30_000,
+    queryFn: () => getMarketPythState(market!.objectId),
+  })
+
+  const [pythResolving, setPythResolving] = useState(false)
+  const [pythError, setPythError] = useState<string | undefined>()
 
   // The backend doesn't persist the market owner; read it from the shared
   // `Market<T>` object to gate the owner-controls panel.
@@ -105,6 +134,27 @@ export default function MarketDetail() {
     enabled: !!market?.objectId,
     staleTime: 60_000,
     queryFn: () => getMarketOwner(market!.objectId),
+  })
+
+  // The connected wallet's LP balance + pending fees, so a resolved market can
+  // offer LPs a "withdraw liquidity + fees" action (the Trade/LP panel is hidden
+  // once resolved). Mirrors the LPPanel ['lp-stats', …] query.
+  const { data: lpStats } = useQuery({
+    queryKey: ['lp-stats', market?.marketId, address],
+    enabled: !!market?.marketId && !!address,
+    staleTime: 30_000,
+    queryFn: () => api.getLpStats(market!.marketId, address!),
+  })
+
+  // The wallet's actual owned `Position` objects for this market, read from chain.
+  // The backend portfolio only has aggregate rows with synthetic ids (it drops the
+  // real object ids), but claim_winnings consumes a specific Position object — so
+  // the claimable list and the object ids it claims must come from chain.
+  const { data: ownedPositions } = useQuery({
+    queryKey: ['owned-positions', market?.marketId, address],
+    enabled: !!market?.marketId && !!address,
+    staleTime: 15_000,
+    queryFn: () => getOwnedPositions(address!, market!.marketId),
   })
 
   if (isLoading) {
@@ -132,26 +182,147 @@ export default function MarketDetail() {
   const finalPrice = market.finalPrice
   const isOwner = !!address && !!onChainOwner && address.toLowerCase() === onChainOwner
 
+  // A Pyth-bound market that hasn't settled can be resolved trustlessly on-chain
+  // once it has closed (now ≥ resolves_at). The contract aborts before close, so
+  // we gate the button on it and otherwise show when the market opens for resolution.
+  const hasPriceFeed = !!pythState?.hasPriceFeed
+  const closeMs = pythState?.resolvesAt ?? 0
+  const isClosed = closeMs > 0 && Date.now() >= closeMs
+  const showPythResolve = !resolved && hasPriceFeed
+
+  // Refresh the bound Pyth feed and call `resolve_with_pyth` via the backend
+  // (permissionless; the backend signer pays gas). The event poller then writes
+  // the final price, which arrives over the socket / on refetch.
+  const handleResolvePyth = async () => {
+    setPythError(undefined)
+    setPythResolving(true)
+    try {
+      await api.resolvePyth(String(market.marketId))
+      // Settlement is async on the indexer; refetch market + portfolio so the
+      // resolved banner and claimable positions appear.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['market', marketId] }),
+        queryClient.invalidateQueries({ queryKey: ['markets'] }),
+        queryClient.invalidateQueries({ queryKey: ['portfolio', address] }),
+        queryClient.invalidateQueries({ queryKey: ['market-pyth-state', market.objectId] }),
+      ])
+    } catch (e) {
+      setPythError(e instanceof Error ? formatTxError(e) : 'Pyth resolution failed')
+    } finally {
+      setPythResolving(false)
+    }
+  }
+
   // Resolution is handled off-app for now — an AI oracle will drive it (TODO).
   // The owner-facing two-phase resolution panel was removed pending that work.
 
   // Redeem one winning Position object for collateral (consumes the object).
+  // Surfaces success/failure via toasts and refetches portfolio + market so the
+  // claimed position drops off the list (the bare signAndExecute gave no feedback
+  // and left stale state, so a successful claim still looked broken).
   const handleClaimWinnings = async (positionId: string) => {
-    const tx = new Transaction()
-    // claim_winnings<T>(market, position)
-    tx.moveCall({
-      target: target('claim_winnings'),
-      typeArguments: [market.collateralType],
-      arguments: [tx.object(market.objectId), tx.object(positionId)],
-    })
-    await signAndExecute({ transaction: tx })
+    setClaimingId(positionId)
+    try {
+      const tx = new Transaction()
+      // claim_winnings<T>(market, position)
+      tx.moveCall({
+        target: target('claim_winnings'),
+        typeArguments: [market.collateralType],
+        arguments: [tx.object(market.objectId), tx.object(positionId)],
+      })
+      const { digest } = await signAndExecute({ transaction: tx })
+      // Wait for indexing before refetching, else the position still shows.
+      await suiClient.waitForTransaction({ digest })
+      toast('success', 'Winnings claimed — collateral sent to your wallet')
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['market', marketId] }),
+        queryClient.invalidateQueries({ queryKey: ['markets'] }),
+        queryClient.invalidateQueries({ queryKey: ['portfolio', address] }),
+        queryClient.invalidateQueries({ queryKey: ['owned-positions', market.marketId, address] }),
+      ])
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error('Claim failed')
+      if (!isUserRejection(err)) toast('error', formatTxError(err))
+    } finally {
+      setClaimingId(null)
+    }
   }
 
-  // A position wins iff: YES (ABOVE) and final ≥ strike, or NO (BELOW) and final < strike.
-  const claimablePositions = (portfolio?.positions ?? []).filter((p) => {
-    if (String(p.marketId) !== String(market.marketId)) return false
+  // Post-resolution LP exit: burn the caller's full LP balance to reclaim their
+  // share of collateral. remove_liquidity claims accrued fees first on-chain, so
+  // this single call returns liquidity + fees together.
+  //
+  // remove_liquidity is solvency-checked against `available_liquidity`, but a
+  // losing position's collateral stays *locked* after resolution until someone
+  // calls release_losing_collateral (permissionless) — otherwise the withdrawal
+  // aborts with EInsufficientLiquidity (code 6). So we first batch a release for
+  // every distinct losing token id in the market (deduped) into the same PTB,
+  // freeing that collateral before the burn. (Collateral backing *unclaimed
+  // winning* positions stays locked by design until those winners claim.)
+  const handleClaimLp = async () => {
+    if (!lpStats || lpStats.lpTokenBalance <= 0) return
+    setLpClaiming(true)
+    try {
+      const tx = new Transaction()
+
+      // Free collateral locked by losing token ids first. A YES (ABOVE) position
+      // loses iff finalPrice < strike; a NO (BELOW) position loses iff
+      // finalPrice >= strike. Dedupe by (strike, is_yes) — one release per token id.
+      if (finalPrice != null) {
+        const seen = new Set<string>()
+        for (const p of market.positions ?? []) {
+          const isYes = p.direction === 'ABOVE'
+          const lost = isYes ? finalPrice < p.targetValueX : finalPrice >= p.targetValueX
+          if (!lost) continue
+          const key = `${p.targetValueX}|${isYes}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          const { mag, neg } = floatToWadParts(p.targetValueX)
+          // release_losing_collateral<T>(market, target_mag, target_neg, is_yes)
+          tx.moveCall({
+            target: target('release_losing_collateral'),
+            typeArguments: [market.collateralType],
+            arguments: [
+              tx.object(market.objectId),
+              tx.pure.u256(mag),
+              tx.pure.bool(neg),
+              tx.pure.bool(isYes),
+            ],
+          })
+        }
+      }
+
+      // remove_liquidity<T>(market, shares_to_remove: u256) — WAD shares.
+      tx.moveCall({
+        target: target('remove_liquidity'),
+        typeArguments: [market.collateralType],
+        arguments: [tx.object(market.objectId), tx.pure.u256(floatToWad(lpStats.lpTokenBalance))],
+      })
+      const { digest } = await signAndExecute({ transaction: tx })
+      await suiClient.waitForTransaction({ digest })
+      toast('success', 'Liquidity + fees withdrawn to your wallet')
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['market', marketId] }),
+        queryClient.invalidateQueries({ queryKey: ['markets'] }),
+        queryClient.invalidateQueries({ queryKey: ['portfolio', address] }),
+        queryClient.invalidateQueries({ queryKey: ['lp-stats', market.marketId, address] }),
+        queryClient.invalidateQueries({ queryKey: ['market-seed-state', market.objectId] }),
+      ])
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error('Withdrawal failed')
+      if (!isUserRejection(err)) toast('error', formatTxError(err))
+    } finally {
+      setLpClaiming(false)
+    }
+  }
+
+  // A position wins iff: YES (is_yes) and final ≥ strike, or NO and final < strike.
+  // Read from the wallet's actual owned Position objects (each carries its real
+  // object id, which is what claim_winnings consumes).
+  const claimablePositions = (ownedPositions ?? []).filter((p) => {
     if (finalPrice == null) return false
-    return p.direction === 'ABOVE' ? finalPrice >= p.targetValueX : finalPrice < p.targetValueX
+    if (p.amountWad <= 0n) return false
+    return p.isYes ? finalPrice >= p.targetX : finalPrice < p.targetX
   })
 
   return (
@@ -219,6 +390,34 @@ export default function MarketDetail() {
         </div>
       </div>
 
+      {/* ── Pyth trustless-resolution panel ────────────────────────── */}
+      {showPythResolve && (
+        <div className={`rounded-xl border p-5 flex items-center justify-between flex-wrap gap-4 transition-colors duration-300 ${T.infoCard}`}>
+          <div>
+            <p className={`font-display font-700 text-base transition-colors duration-300 ${T.heading}`}>
+              Pyth settlement{feedLabel(pythState?.priceFeedId) ? ` · ${feedLabel(pythState?.priceFeedId)}` : ''}
+            </p>
+            <p className={`text-xs font-mono mt-1 transition-colors duration-300 ${T.resolvedSub}`}>
+              {isClosed
+                ? 'This market is closed. Anyone can settle it trustlessly from the bound Pyth feed.'
+                : `Resolution opens at ${closeMs ? new Date(closeMs).toLocaleString() : '—'} (market still live).`}
+            </p>
+            {pythError && (
+              <p className={`text-xs font-mono mt-2 ${T.errorText}`}>{pythError}</p>
+            )}
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            loading={pythResolving}
+            disabled={!isClosed || pythResolving}
+            onClick={handleResolvePyth}
+          >
+            {isClosed ? 'Resolve via Pyth' : 'Not yet closed'}
+          </Button>
+        </div>
+      )}
+
       {/* ── Resolution banner ──────────────────────────────────────── */}
       {resolved && (
         <div className={`rounded-xl border p-5 flex items-center justify-between flex-wrap gap-4 transition-colors duration-300 ${T.yesResolved}`}>
@@ -237,13 +436,15 @@ export default function MarketDetail() {
               <div className="flex flex-col gap-2 items-end">
                 {claimablePositions.map((p) => (
                   <Button
-                    key={p.positionId}
-                    variant={p.direction === 'ABOVE' ? 'ghost' : 'danger'}
+                    key={p.objectId}
+                    variant={p.isYes ? 'ghost' : 'danger'}
                     size="sm"
-                    className={p.direction === 'ABOVE' ? 'border-[#0B7A52] text-[#0B7A52]' : ''}
-                    onClick={() => handleClaimWinnings(p.positionId)}
+                    className={p.isYes ? 'border-[#0B7A52] text-[#0B7A52]' : ''}
+                    loading={claimingId === p.objectId}
+                    disabled={claimingId !== null}
+                    onClick={() => handleClaimWinnings(p.objectId)}
                   >
-                    Claim @ {p.targetValueX.toLocaleString()} ({p.tokensMinted.toFixed(2)} tokens)
+                    Claim @ {p.targetX.toLocaleString()} ({p.tokens.toFixed(2)} tokens)
                   </Button>
                 ))}
               </div>
@@ -253,6 +454,34 @@ export default function MarketDetail() {
               </p>
             )
           )}
+        </div>
+      )}
+
+      {/* ── LP withdrawal (post-resolution) ─────────────────────────── */}
+      {/* The Trade/LP panel is hidden once resolved, so LPs reclaim their
+          collateral + accrued fees here. remove_liquidity claims fees on-chain
+          first, so one button returns both. */}
+      {resolved && address && lpStats && lpStats.lpTokenBalance > 0 && (
+        <div className={`rounded-xl border p-5 flex items-center justify-between flex-wrap gap-4 transition-colors duration-300 ${T.infoCard}`}>
+          <div>
+            <p className={`font-display font-700 text-base transition-colors duration-300 ${T.heading}`}>
+              Your Liquidity
+            </p>
+            <p className={`text-xs font-mono mt-1 transition-colors duration-300 ${T.resolvedSub}`}>
+              {lpStats.lpTokenBalance.toFixed(4)} OCLP
+              {lpStats.pendingRewards > 0 ? ` · +$${lpStats.pendingRewards.toFixed(4)} fees` : ''} — withdraw your collateral and accrued fees
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="border-[#0B7A52] text-[#0B7A52]"
+            loading={lpClaiming}
+            disabled={lpClaiming}
+            onClick={handleClaimLp}
+          >
+            Withdraw Liquidity + Fees
+          </Button>
         </div>
       )}
 

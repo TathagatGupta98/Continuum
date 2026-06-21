@@ -16,9 +16,11 @@ export const REGISTRY_ID =
   (import.meta.env.VITE_REGISTRY_ID as string) ??
   '0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23'
 
+// Circle's official testnet USDC — anyone can fund it via faucet.circle.com or
+// `sui client faucet --coin-type usdc`, no protocol-controlled mint required.
 export const COLLATERAL_TYPE =
   (import.meta.env.VITE_COLLATERAL_TYPE as string) ??
-  '0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549::mock_usdc::MOCK_USDC'
+  '0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC'
 
 /** The shared `Clock` object — required by every resolution entry function. */
 export const CLOCK_ID = '0x6'

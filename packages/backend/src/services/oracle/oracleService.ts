@@ -235,6 +235,41 @@ async function resolveViaPyth(
   }
 }
 
+/**
+ * On-demand trustless settlement of a single Pyth-bound market. Looks up the
+ * market, reads its bound feed id from the shared `Market<T>` object, and runs
+ * `resolveViaPyth` (refresh feed + `resolve_with_pyth` in one PTB). Throws if the
+ * market is unknown, has no feed bound, or the on-chain call fails — so the HTTP
+ * route can surface a real error. `resolveViaPyth` records the `OracleResolution`
+ * audit row either way; the event poller then writes `Market.finalPrice`.
+ */
+export async function resolvePythMarket(
+  marketId: string,
+): Promise<{ txDigest: string | null; feedId: string }> {
+  const market = await prisma.market.findUnique({ where: { marketId } });
+  if (!market) throw new Error(`market ${marketId} not found`);
+  if (!market.objectId) throw new Error(`market ${marketId} has no on-chain objectId`);
+
+  const feedId = await getPriceFeedId(market.objectId);
+  if (!feedId) {
+    throw new Error(
+      `market ${marketId} has no Pyth price feed bound — resolve it manually or via the AI oracle`,
+    );
+  }
+
+  await resolveViaPyth(
+    { marketId: market.marketId, objectId: market.objectId, collateralType: market.collateralType },
+    feedId,
+  );
+
+  // resolveViaPyth swallows on-chain errors into a FAILED audit row; re-surface it.
+  const row = await prisma.oracleResolution.findUnique({ where: { marketId } });
+  if (row?.status === 'FAILED') {
+    throw new Error(row.error ?? 'pyth resolution failed');
+  }
+  return { txDigest: row?.txDigest ?? null, feedId };
+}
+
 // ─── Resolution worker ───────────────────────────────────────────────────────
 
 let workerTimer: NodeJS.Timeout | null = null;

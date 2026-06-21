@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import prisma from '../models/db';
-import { resolveMarket } from '../services/oracle/oracleService';
+import { resolveMarket, resolvePythMarket } from '../services/oracle/oracleService';
 
 const router = Router();
 
@@ -89,6 +89,24 @@ router.post('/:marketId/resolve', async (req: Request, res: Response, next: Next
     }
     const decision = await resolveMarket(marketId);
     res.json({ success: true, data: decision });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/oracle/:marketId/resolve-pyth
+ * Trustless on-chain settlement for a Pyth-bound (financial) market: refreshes
+ * the bound Pyth feed and calls `market::resolve_with_pyth` in one PTB. The Move
+ * call is permissionless (the backend signer only pays gas), and the market must
+ * have closed (`now >= resolves_at`) or the contract aborts. Used by the
+ * frontend "Resolve via Pyth" button; the worker covers automated settlement.
+ */
+router.post('/:marketId/resolve-pyth', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const marketId = String(req.params.marketId);
+    const result = await resolvePythMarket(marketId);
+    res.json({ success: true, data: result });
   } catch (err) {
     next(err);
   }

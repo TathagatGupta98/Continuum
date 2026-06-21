@@ -127,4 +127,11 @@ export const api = {
   getPortfolio(address: string): Promise<Portfolio> {
     return request(`/api/users/${address}/portfolio`)
   },
+
+  // Trigger trustless on-chain settlement of a Pyth-bound market: the backend
+  // refreshes the bound feed and calls `market::resolve_with_pyth` (permissionless;
+  // the backend signer only pays gas). Returns the settlement tx digest.
+  resolvePyth(id: string): Promise<{ txDigest: string | null; feedId: string }> {
+    return request(`/api/oracle/${id}/resolve-pyth`, { method: 'POST' })
+  },
 }

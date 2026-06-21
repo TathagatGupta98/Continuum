@@ -133,7 +133,8 @@ the live testnet deployment as fallback) so a redeploy only changes env:
 ```ts
 export const PACKAGE_ID     // VITE_PACKAGE_ID
 export const REGISTRY_ID    // VITE_REGISTRY_ID — the shared continuum::market::Registry
-export const COLLATERAL_TYPE// VITE_COLLATERAL_TYPE — the coin type T (mock_usdc::MOCK_USDC)
+export const COLLATERAL_TYPE// VITE_COLLATERAL_TYPE — coin type T for new markets; default is
+                             // real testnet USDC (Circle), not mock_usdc — see root CLAUDE.md
 export const CLOCK_ID = '0x6' // shared Clock, required by every resolution entry function
 export const target = (name) => `${PACKAGE_ID}::market::${name}` // Move-call target builder
 ```
@@ -380,7 +381,7 @@ VITE_API_BASE_URL=                # empty → Vite proxies /api + /socket.io to 
 VITE_SUI_NETWORK=testnet
 VITE_PACKAGE_ID=0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549
 VITE_REGISTRY_ID=0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23
-VITE_COLLATERAL_TYPE=0x76ab32…::mock_usdc::MOCK_USDC
+VITE_COLLATERAL_TYPE=0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC
 ```
 
 ---
