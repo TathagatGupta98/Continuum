@@ -17,8 +17,8 @@
     "skipLibCheck": true,
     "noEmit": true,
     "paths": {
-      "@omnicurve/types": ["./packages/types/src/index.ts"],
-      "@omnicurve/types/*": ["./packages/types/src/*"]
+      "@continuum/types": ["./packages/types/src/index.ts"],
+      "@continuum/types/*": ["./packages/types/src/*"]
     }
   }
 }

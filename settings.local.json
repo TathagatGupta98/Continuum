@@ -33,7 +33,7 @@
       "Bash(curl -s http://localhost:3001/api/health)",
       "Bash(curl -s http://localhost:3001/api/markets)",
       "Bash(python3 -m json.tool)",
-      "Bash(grep -rln \"wagmi\\\\|viem\\\\|rainbow\\\\|@omnicurve/types\\\\|arbiscan\\\\|arbitrum\\\\|ammAddress\\\\|routerAddress\\\\|lpTokenAddress\\\\|winningTokenId\\\\|0x\\\\${\" src/)",
+      "Bash(grep -rln \"wagmi\\\\|viem\\\\|rainbow\\\\|@continuum/types\\\\|arbiscan\\\\|arbitrum\\\\|ammAddress\\\\|routerAddress\\\\|lpTokenAddress\\\\|winningTokenId\\\\|0x\\\\${\" src/)",
       "Bash(npx tsc *)",
       "Bash(echo \"EXIT: $?\")"
     ],
