@@ -84,6 +84,11 @@ module continuum::market {
     const ENoPriceFeed: u64 = 20;
     /// The supplied Pyth `PriceInfoObject` is not the market's bound feed.
     const EWrongPriceFeed: u64 = 21;
+    /// Trading attempted after the market's scheduled close (`resolves_at`).
+    const EMarketClosed: u64 = 22;
+    /// Manual resolution attempted on a market bound to a Pyth feed — those must
+    /// settle trustlessly via `resolve_with_pyth`, never by a human submitter.
+    const EFeedBoundMarket: u64 = 23;
 
     // ── Objects ───────────────────────────────────────────────────────────
 
@@ -403,9 +408,10 @@ module continuum::market {
         payment: Coin<T>,
         target_mag: u256,
         target_neg: bool,
+        clock: &Clock,
         ctx: &mut TxContext,
     ) {
-        buy_internal(market, payment, fp::from(target_mag, target_neg), true, ctx);
+        buy_internal(market, payment, fp::from(target_mag, target_neg), true, clock, ctx);
     }
 
     /// Buy a NO position (wins iff final_price < strike).
@@ -414,9 +420,10 @@ module continuum::market {
         payment: Coin<T>,
         target_mag: u256,
         target_neg: bool,
+        clock: &Clock,
         ctx: &mut TxContext,
     ) {
-        buy_internal(market, payment, fp::from(target_mag, target_neg), false, ctx);
+        buy_internal(market, payment, fp::from(target_mag, target_neg), false, clock, ctx);
     }
 
     fun buy_internal<T>(
@@ -424,8 +431,16 @@ module continuum::market {
         payment: Coin<T>,
         target: Fp,
         is_yes: bool,
+        clock: &Clock,
         ctx: &mut TxContext,
     ) {
+        // Trading closes at resolution and at the scheduled close. Without this,
+        // once the market is resolved (and `final_price` is public) anyone could
+        // buy a guaranteed-winning strike priced below 1.0 and immediately
+        // `claim_winnings` for a multiple of their stake — draining LP collateral.
+        assert!(!market.market_resolved, EAlreadyResolved);
+        assert!(clock::timestamp_ms(clock) < market.resolves_at, EMarketClosed);
+
         let stake_units = coin::value(&payment);
         assert!(stake_units > 0, EZeroAmount);
 
@@ -485,6 +500,9 @@ module continuum::market {
     ) {
         assert!(ctx.sender() == market.owner, EUnauthorized);
         assert!(!market.market_resolved, EAlreadyResolved);
+        // A feed-bound market must settle trustlessly via `resolve_with_pyth`; the
+        // owner cannot override the bound source with an arbitrary manual price.
+        assert!(vector::is_empty(&market.price_feed_id), EFeedBoundMarket);
         assert!(clock::timestamp_ms(clock) >= market.resolves_at, EMarketNotClosed);
         market.final_price = fp::from(price_mag, price_neg);
         market.market_resolved = true;
@@ -502,6 +520,8 @@ module continuum::market {
     ) {
         assert!(ctx.sender() == market.owner, EUnauthorized);
         assert!(!market.market_resolved, EAlreadyResolved);
+        // A feed-bound market settles only via `resolve_with_pyth` (see above).
+        assert!(vector::is_empty(&market.price_feed_id), EFeedBoundMarket);
         assert!(market.resolution_time == 0, EAlreadyProposed);
         // Cannot even begin resolution before the scheduled close.
         assert!(clock::timestamp_ms(clock) >= market.resolves_at, EMarketNotClosed);

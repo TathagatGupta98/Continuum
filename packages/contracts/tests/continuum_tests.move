@@ -128,7 +128,9 @@ module continuum::continuum_tests {
             assert!(market::total_shares(&m) == 1_000_000_000 * 1_000_000_000_000, 0);
 
             let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(&mut sc)); // 1 USDC
-            market::buy_yes(&mut m, stake, 0, false, ts::ctx(&mut sc));
+            let c = clock::create_for_testing(ts::ctx(&mut sc)); // t=0 < resolves_at
+            market::buy_yes(&mut m, stake, 0, false, &c, ts::ctx(&mut sc));
+            clock::destroy_for_testing(c);
 
             ts::return_to_sender(&sc, cap);
             ts::return_shared(m);
@@ -203,7 +205,9 @@ module continuum::continuum_tests {
             let liq = mock_usdc::mint(&mut cap, 1_000_000_000, ts::ctx(&mut sc));
             market::add_liquidity(&mut m, liq, ts::ctx(&mut sc));
             let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
-            market::buy_yes(&mut m, stake, 0, false, ts::ctx(&mut sc));
+            let c = clock::create_for_testing(ts::ctx(&mut sc)); // t=0 < resolves_at
+            market::buy_yes(&mut m, stake, 0, false, &c, ts::ctx(&mut sc));
+            clock::destroy_for_testing(c);
             ts::return_to_sender(&sc, cap);
             ts::return_shared(m);
         };
@@ -350,7 +354,9 @@ module continuum::continuum_tests {
             let liq = mock_usdc::mint(&mut cap, 1_000_000_000, ts::ctx(sc));
             market::add_liquidity(&mut m, liq, ts::ctx(sc));
             let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(sc));
-            market::buy_yes(&mut m, stake, 0, false, ts::ctx(sc));
+            let c = clock::create_for_testing(ts::ctx(sc)); // t=0 < resolves_at
+            market::buy_yes(&mut m, stake, 0, false, &c, ts::ctx(sc));
+            clock::destroy_for_testing(c);
             ts::return_to_sender(sc, cap);
             ts::return_shared(m);
         };
@@ -488,7 +494,9 @@ module continuum::continuum_tests {
             let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
             let mut cap = ts::take_from_sender<TreasuryCap<MOCK_USDC>>(&sc);
             let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
-            market::buy_yes(&mut m, stake, 0, false, ts::ctx(&mut sc));
+            let c = clock::create_for_testing(ts::ctx(&mut sc)); // t=0 < resolves_at
+            market::buy_yes(&mut m, stake, 0, false, &c, ts::ctx(&mut sc));
+            clock::destroy_for_testing(c);
             ts::return_to_sender(&sc, cap);
             ts::return_shared(m);
         };
@@ -555,6 +563,108 @@ module continuum::continuum_tests {
             let payout = ts::take_from_sender<Coin<MOCK_USDC>>(&sc);
             assert!(coin::value(&payout) > 0, 0);
             ts::return_to_sender(&sc, payout);
+        };
+        ts::end(sc);
+    }
+
+    // ── Settlement-safety regressions ─────────────────────────────────────
+
+    /// Trading must stop at the scheduled close, even before resolution.
+    #[test]
+    #[expected_failure(abort_code = 22, location = continuum::market)]
+    fun trading_closes_at_scheduled_close() {
+        let admin = @0xA;
+        let mut sc = ts::begin(admin);
+        {
+            market::init_for_testing(ts::ctx(&mut sc));
+            mock_usdc::init_for_testing(ts::ctx(&mut sc));
+        };
+        ts::next_tx(&mut sc, admin);
+        {
+            let mut registry = ts::take_shared<Registry>(&sc);
+            market::create_market<MOCK_USDC>(&mut registry, b"Closes", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
+            ts::return_shared(registry);
+        };
+        ts::next_tx(&mut sc, admin);
+        {
+            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut cap = ts::take_from_sender<TreasuryCap<MOCK_USDC>>(&sc);
+            let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
+            let mut c = clock::create_for_testing(ts::ctx(&mut sc));
+            clock::set_for_testing(&mut c, 1000); // now == resolves_at → closed (EMarketClosed = 22)
+            market::buy_yes(&mut m, stake, 0, false, &c, ts::ctx(&mut sc));
+            clock::destroy_for_testing(c);
+            ts::return_to_sender(&sc, cap);
+            ts::return_shared(m);
+        };
+        ts::end(sc);
+    }
+
+    /// Once resolved, no new bets — closes the buy-a-known-winner drain.
+    #[test]
+    #[expected_failure(abort_code = 9, location = continuum::market)]
+    fun no_trading_after_resolution() {
+        let admin = @0xA;
+        let mut sc = ts::begin(admin);
+        {
+            market::init_for_testing(ts::ctx(&mut sc));
+            mock_usdc::init_for_testing(ts::ctx(&mut sc));
+        };
+        ts::next_tx(&mut sc, admin);
+        {
+            let mut registry = ts::take_shared<Registry>(&sc);
+            market::create_market<MOCK_USDC>(&mut registry, b"Resolved", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
+            ts::return_shared(registry);
+        };
+        ts::next_tx(&mut sc, admin);
+        {
+            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut c = clock::create_for_testing(ts::ctx(&mut sc));
+            clock::set_for_testing(&mut c, 1000);
+            market::set_final_price(&mut m, 100_000_000_000_000_000_000, false, &c, ts::ctx(&mut sc));
+            clock::destroy_for_testing(c);
+            ts::return_shared(m);
+        };
+        // Attempt to buy a guaranteed winner after resolution → EAlreadyResolved (9).
+        ts::next_tx(&mut sc, admin);
+        {
+            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut cap = ts::take_from_sender<TreasuryCap<MOCK_USDC>>(&sc);
+            let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
+            let mut c = clock::create_for_testing(ts::ctx(&mut sc));
+            clock::set_for_testing(&mut c, 1001);
+            market::buy_yes(&mut m, stake, 0, false, &c, ts::ctx(&mut sc));
+            clock::destroy_for_testing(c);
+            ts::return_to_sender(&sc, cap);
+            ts::return_shared(m);
+        };
+        ts::end(sc);
+    }
+
+    /// A Pyth-bound market cannot be resolved manually by the owner.
+    #[test]
+    #[expected_failure(abort_code = 23, location = continuum::market)]
+    fun feed_bound_market_rejects_manual_resolution() {
+        let admin = @0xA;
+        let mut sc = ts::begin(admin);
+        { market::init_for_testing(ts::ctx(&mut sc)); };
+        ts::next_tx(&mut sc, admin);
+        {
+            let mut registry = ts::take_shared<Registry>(&sc);
+            // A 32-byte feed id makes this a trustless, Pyth-settled market.
+            let feed = x"0000000000000000000000000000000000000000000000000000000000000001";
+            market::create_market<MOCK_USDC>(&mut registry, b"BTC", 1_000_000_000_000_000, 1000, feed, ts::ctx(&mut sc));
+            ts::return_shared(registry);
+        };
+        ts::next_tx(&mut sc, admin);
+        {
+            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut c = clock::create_for_testing(ts::ctx(&mut sc));
+            clock::set_for_testing(&mut c, 1000);
+            // Owner attempts a manual override → EFeedBoundMarket (23).
+            market::set_final_price(&mut m, 100, false, &c, ts::ctx(&mut sc));
+            clock::destroy_for_testing(c);
+            ts::return_shared(m);
         };
         ts::end(sc);
     }
