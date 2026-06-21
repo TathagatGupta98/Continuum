@@ -12,28 +12,25 @@
 > the backend and frontend are both wired to it. See `packages/frontend/CLAUDE.md` for the
 > frontend architecture reference.
 >
-> **Live testnet deployment (Sui) — republished 2026-06-21** (this build adds the
-> `position_market` module — Kiosk-based **tradeable positions** — so the package was
-> redeployed; all ids below are the new instance, the pre-2026-06-21 ids are obsolete):
-> - `PACKAGE_ID` = `0x024febde4e1e8e5d7a259ec836de90ebd596289e89a38c199cb7414f56f00200`
-> - `REGISTRY_ID` (shared) = `0x3c585041337389132541ecee0c2d1425ad539e147d18ba1d34f768dd4f1c8cab`
-> - `Market #0` (shared) = `0x7c17c24831ea92ec91389e61f5399c3005d9a1c511ceb76329e0a6b3825d7a09`
-> - `TransferPolicy<Position>` (shared) = `0x80771b4652ad8cec31c94fc0237422890900227e18f69579400d28d5aeba8b74`
+> **Live testnet deployment (Sui) — republished 2026-06-21** (this build removes the mock
+> collateral coin: the protocol now mints **no currency of its own** and runs entirely on real
+> testnet USDC. The package was redeployed; all ids below are the new instance, every pre-this
+> deploy id is obsolete):
+> - `PACKAGE_ID` = `0xd8240a55c47912a43a7d1ec6dfcc9d7627772b66227531719b08ebba103ec532`
+> - `REGISTRY_ID` (shared) = `0x8f9092d1a7e103f7aec4e50d69617cef85732590f4156daeefb14c6e9d70824d`
+>   — **starts empty** (`market_count = 0`); no seed market is created at publish.
+> - `TransferPolicy<Position>` (shared) = `0xa04784f7f6a63dcb9902b759e0e366eb1343388bb690588fd51b949733e34791`
 >   — created at publish by `position_market::init`, carries the market-open rule; required to
 >   confirm a Kiosk purchase of a `Position`. Its `TransferPolicyCap` (owned by the deployer) =
->   `0x8e71a59e418b3c24c863aac1f98c253e44351208e11ff8555e53c03c0b7f54f8`.
-> - `Publisher` (owned) = `0xed0c55a64ca5cc2fa319e4cad990a6b4a5d1e4346768a2408383f970e36350bf`;
->   `UpgradeCap` (owned) = `0xa75a5b2ba40f225597037916aaff01d98af790b53d1d19a32e89960cc9a976c4`.
-> - `TreasuryCap<MOCK_USDC>` (owned) = `0xbffb37f5be5ff8081cd7d8024444618b8ae32014ad9f957761337d037b504620`
-> - `COLLATERAL_TYPE` (default for new markets, updated 2026-06-21) =
->   `0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC` — Circle's
->   official testnet USDC (6 decimals, same as `MOCK_USDC`). Anyone can fund it via
->   faucet.circle.com or `sui client faucet --coin-type usdc`, no protocol-controlled
->   `TreasuryCap` mint required. `Market #0` above predates this switch and is permanently
->   pinned to `MOCK_USDC` (`T` is immutable per market); only markets created *after* this change
->   default to real testnet USDC. Per-market trading/LP/resolution always reads the market's own
->   `collateralType` from chain, so old and new markets coexist fine — only the
->   `create_market` default (frontend `useCreateMarket` / `COLLATERAL_TYPE` env) changed.
+>   `0x41e9d395eb1c96ffef9f75a9614ce4266dd612df8b56700f18a2f5b32adceddc`.
+> - `Publisher` (owned) = `0xc182916636d3b9fa39683a05943f2f134f9b5b296b864681c9661c9bd1067035`;
+>   `UpgradeCap` (owned) = `0x0688bdd06d97564b0ff1cc528c0c4e310a1b76394ad278ad6a2612373b149899`.
+> - `COLLATERAL_TYPE` = `0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC`
+>   — Circle's official **testnet USDC** (6 decimals). The protocol no longer ships a mock coin
+>   or a `TreasuryCap`; fund a wallet via faucet.circle.com. `Market<phantom T>` is generic, so
+>   every market is created with this real USDC type and per-market flows read the market's own
+>   `collateralType` from chain. (Unit tests use a `#[test_only]` `continuum::test_coin` that is
+>   never compiled into the published package.)
 >
 > **Backend env (Sui):** `SUI_RPC_URL`, `PACKAGE_ID`, `REGISTRY_ID`, `COLLATERAL_TYPE`
 > (replaces the old `RPC_URL` + `FACTORY/AMM/ROUTER/USDC` addresses), plus the Pyth settlement
@@ -119,10 +116,10 @@ Continuum/
 │   │   │   ├── fixed_point.move   # Signed WAD (1e18) fixed-point `Fp` over u256
 │   │   │   ├── gaussian.move      # PDF / CDF / erf / exp / sqrt (port of math_core.rs)
 │   │   │   ├── market.move        # Registry, Market<T>, Position, LP, trading, settlement
-│   │   │   ├── position_market.move # Kiosk + TransferPolicy<Position> — tradeable positions
-│   │   │   └── mock_usdc.move     # 6-decimal test collateral coin + faucet
+│   │   │   └── position_market.move # Kiosk + TransferPolicy<Position> — tradeable positions
 │   │   ├── tests/
-│   │   │   └── continuum_tests.move  # Unit (math) + full market-lifecycle tests
+│   │   │   ├── continuum_tests.move  # Unit (math) + full market-lifecycle tests
+│   │   │   └── test_coin.move        # #[test_only] 6-decimal coin — NOT in the published package
 │   │   ├── Move.toml              # Package manifest (name = "continuum")
 │   │   ├── Move.lock              # Resolved dependency lock
 │   │   └── README.md             # Move-package design + build/test + logic-coverage map
@@ -171,7 +168,8 @@ real-world final price, and fees are distributed MasterChef-style.
   maps `market_id → Market` object address.
 - **`Market<phantom T>`** (shared, one per market) — owns the collateral `Balance<T>` vault,
   the Gaussian curve params, LP accounting, per-token liabilities, and settlement state.
-  `T` is the collateral coin type (real USDC on testnet, `mock_usdc::MOCK_USDC` locally).
+  `T` is the collateral coin type — the real testnet/mainnet USDC coin type (the protocol
+  ships no coin of its own).
 - **`Position`** (owned, `has key, store`) — a YES/NO bet. Each `buy_*` mints a fresh
   `Position` to the buyer; `claim_winnings` consumes one. Replaces ERC-1155 balances.
 - **`LpAccount`** (`has store`, lives in a `Table<address, LpAccount>` inside the market) —
@@ -283,11 +281,13 @@ On-chain Gaussian math, a direct port of the Stylus `math_core.rs`: `normal_pdf`
 (0..1 WAD), `erf` (Abramowitz & Stegun 5-coefficient approximation), `exp_wad` (Taylor series,
 clamped), and `sqrt_wad` (used to derive σ from variance). All over `Fp`.
 
-### `continuum::mock_usdc` (mock_usdc.move)
+### Collateral — real USDC only (no protocol coin)
 
-A minimal 6-decimal mock USDC for local testing and a concrete `T` to instantiate `Market<T>`.
-`MOCK_USDC` one-time-witness + `coin::create_currency` (6 decimals); `mint` and entry-friendly
-`faucet`. On testnet/mainnet, instantiate markets with the **real** USDC coin type instead.
+The protocol mints **no currency of its own**. `Market<phantom T>` is generic over the
+collateral coin type `T`, and every market is created with the **real USDC** coin type
+(testnet: `0xa1ec7fc0…::usdc::USDC`). Unit tests need a concrete `T` they can mint, so they use
+`continuum::test_coin` (`tests/test_coin.move`), a 6-decimal `#[test_only]` coin that is **never
+compiled into the published package**.
 
 ---
 
@@ -323,14 +323,15 @@ sui move build
 sui client publish --gas-budget 200000000
 ```
 
-`init` runs at publish: it creates and shares the `Registry`, and (since `mock_usdc` is included)
-mints the `TreasuryCap<MOCK_USDC>` to the publisher. After publishing, record the **package
-ID** and the **`Registry` object ID**, and put them in `packages/backend/.env` (`PACKAGE_ID` /
-`REGISTRY_ID`). For `COLLATERAL_TYPE`, prefer Circle's real testnet USDC type (see the
-migration-status block) so any wallet can fund itself from a public faucet; only fall back to
-the freshly-minted `mock_usdc::MOCK_USDC` (and its `TreasuryCap` object ID) for local testing
-where you control the mint. Then create at least one market (`market::create_market<T>`) so the
-backend seed has something to index. The current testnet IDs are already in the backend `.env`.
+`init` runs at publish: `market::init` creates and shares the `Registry`, and
+`position_market::init` claims the `Publisher` and shares the `TransferPolicy<Position>`. The
+protocol mints **no collateral coin**. After publishing, record the **package ID**, the
+**`Registry` object ID**, and the **`TransferPolicy<Position>` object ID**, and put them in
+`packages/backend/.env` / `packages/frontend/.env` (`PACKAGE_ID` / `REGISTRY_ID` /
+`VITE_TRANSFER_POLICY_ID`). `COLLATERAL_TYPE` is Circle's real testnet USDC type (see the
+migration-status block) — any wallet funds itself from faucet.circle.com. Then create at least
+one market (`market::create_market<USDC>`) so the backend seed has something to index. The
+current testnet IDs are already in the backend `.env`.
 
 > **Legacy (Arbitrum Sepolia) addresses** for the old Stylus deployment live only in the git
 > history now (they have been removed from the README and root config). They are **obsolete** for
@@ -605,7 +606,7 @@ pnpm --filter @continuum/frontend build            # tsc + vite build
    (`market_count` / `get_market` / `market_exists`). Collateral is the generic type `T`, so
    there is no token-address wiring to do.
 
-9. **Generic collateral**: `Market<phantom T>` works with any `Coin<T>`. The frontend/backend
-   default (`COLLATERAL_TYPE`) is Circle's real testnet USDC so anyone can fund a wallet from a
-   public faucet; `mock_usdc::MOCK_USDC` remains available (and still backs `Market #0`) for
-   local testing where a protocol-controlled mint is preferable.
+9. **Generic collateral, real USDC only**: `Market<phantom T>` works with any `Coin<T>`, and
+   every market is created with Circle's real testnet USDC (`COLLATERAL_TYPE`) so anyone can fund
+   a wallet from faucet.circle.com. The protocol ships **no coin of its own** — unit tests use a
+   `#[test_only]` `continuum::test_coin` that never reaches the published package.

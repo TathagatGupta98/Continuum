@@ -25,13 +25,15 @@ The core of **Continuum** translates the continuous Gaussian distribution into a
 
 ## Addresses (Sui Testnet)
 
-`Package:` [0x024febde4e1e8e5d7a259ec836de90ebd596289e89a38c199cb7414f56f00200](https://suiscan.xyz/testnet/object/0x024febde4e1e8e5d7a259ec836de90ebd596289e89a38c199cb7414f56f00200)
+`Package:` [0xd8240a55c47912a43a7d1ec6dfcc9d7627772b66227531719b08ebba103ec532](https://suiscan.xyz/testnet/object/0xd8240a55c47912a43a7d1ec6dfcc9d7627772b66227531719b08ebba103ec532)
 
-`Registry (shared):` [0x3c585041337389132541ecee0c2d1425ad539e147d18ba1d34f768dd4f1c8cab](https://suiscan.xyz/testnet/object/0x3c585041337389132541ecee0c2d1425ad539e147d18ba1d34f768dd4f1c8cab)
+`Registry (shared):` [0x8f9092d1a7e103f7aec4e50d69617cef85732590f4156daeefb14c6e9d70824d](https://suiscan.xyz/testnet/object/0x8f9092d1a7e103f7aec4e50d69617cef85732590f4156daeefb14c6e9d70824d)
 
-`Market #0 {BTC price @ 2026} (shared):` [0x7c17c24831ea92ec91389e61f5399c3005d9a1c511ceb76329e0a6b3825d7a09](https://suiscan.xyz/testnet/object/0x7c17c24831ea92ec91389e61f5399c3005d9a1c511ceb76329e0a6b3825d7a09)
+`TransferPolicy<Position> (shared):` [0xa04784f7f6a63dcb9902b759e0e366eb1343388bb690588fd51b949733e34791](https://suiscan.xyz/testnet/object/0xa04784f7f6a63dcb9902b759e0e366eb1343388bb690588fd51b949733e34791)
 
-`Collateral type:` `0x024febde4e1e8e5d7a259ec836de90ebd596289e89a38c199cb7414f56f00200::mock_usdc::MOCK_USDC`
+`Collateral type:` `0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC` (testnet USDC)
+
+> The registry currently has **no markets** — create one from the app (or `market::create_market<USDC>`).
 
 ## Table of Contents
 
@@ -227,7 +229,7 @@ continuum::market
 | Collateral custody | a `Balance<T>` vault; collateral is any `Coin<T>` |
 | Discovery | a shared `Registry` (`market_count` / `get_market` / `market_exists`) |
 
-`T` is the collateral coin type — `continuum::mock_usdc::MOCK_USDC` for local/testnet, the real USDC coin type on mainnet.
+`T` is the collateral coin type — the real testnet/mainnet USDC coin type. The protocol mints no coin of its own.
 
 **Module breakdown:**
 
@@ -236,7 +238,7 @@ continuum::market
 | `market.move` | Registry, market lifecycle, AMM/router/LP roles, settlement | `create_market`, `add_liquidity`, `remove_liquidity`, `buy_yes`, `buy_no`, `set_final_price`, `claim_winnings`, `release_losing_collateral` |
 | `gaussian.move` | On-chain Gaussian math: PDF, CDF, erf, exp, sqrt | `normal_cdf`, `normal_pdf`, `erf`, `exp_wad`, `sqrt_wad` |
 | `fixed_point.move` | Signed WAD fixed-point `Fp` over `u256` | `mul`, `div`, `add`, `sub`, `neg`, `abs`, comparisons |
-| `mock_usdc.move` | 6-decimal mock USDC collateral coin + faucet | `mint`, `faucet` |
+| `position_market.move` | Kiosk + `TransferPolicy<Position>` — tradeable positions (market-open rule) | `list_position`, `delist_position`, `buy_listed_position`, `take_and_claim` |
 
 ### 2.3 Trade Execution Infrastructure
 
@@ -433,26 +435,26 @@ sui move build
 sui client publish --gas-budget 200000000
 ```
 
-`init` runs at publish: it creates and shares the `Registry`, and (since `mock_usdc` is included) mints the `TreasuryCap<MOCK_USDC>` to the publisher. From the publish output, record the **package ID**, the shared **`Registry` object ID**, and the **`TreasuryCap<MOCK_USDC>` id**.
+`init` runs at publish: `market::init` shares the `Registry` and `position_market::init` shares the `TransferPolicy<Position>`. The protocol mints no collateral coin. From the publish output, record the **package ID**, the shared **`Registry` object ID**, and the shared **`TransferPolicy<Position>` id**.
 
 ```bash
-# 3. Create a market so the backend has something to index
+# 3. Create a market so the backend has something to index (real testnet USDC)
+USDC=0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC
 sui client call --package $PACKAGE_ID --module market --function create_market \
-  --type-args $PACKAGE_ID::mock_usdc::MOCK_USDC \
-  --args $REGISTRY_ID "What will BTC be at end of 2026?" 100000000000000000 <resolves_at_ms> \
+  --type-args $USDC \
+  --args $REGISTRY_ID "What will BTC be at end of 2026?" 100000000000000000 <resolves_at_ms> "0x" \
   --gas-budget 100000000
-# (sigma_min_mag is WAD; resolves_at is a Clock ms timestamp, must be > 0.)
+# (sigma_min_mag is WAD; resolves_at is a Clock ms timestamp, must be > 0; "0x" = no Pyth feed.)
 ```
 
 ### Deployed Objects (Sui Testnet)
 
 | Object | Id |
 |--------|----|
-| Package | `0x024febde4e1e8e5d7a259ec836de90ebd596289e89a38c199cb7414f56f00200` |
-| Registry (shared) | `0x3c585041337389132541ecee0c2d1425ad539e147d18ba1d34f768dd4f1c8cab` |
-| Market #0 (shared) | `0x7c17c24831ea92ec91389e61f5399c3005d9a1c511ceb76329e0a6b3825d7a09` |
-| TreasuryCap\<MOCK_USDC\> | `0xbffb37f5be5ff8081cd7d8024444618b8ae32014ad9f957761337d037b504620` |
-| Collateral type | `0x76ab32...::mock_usdc::MOCK_USDC` |
+| Package | `0xd8240a55c47912a43a7d1ec6dfcc9d7627772b66227531719b08ebba103ec532` |
+| Registry (shared) | `0x8f9092d1a7e103f7aec4e50d69617cef85732590f4156daeefb14c6e9d70824d` |
+| TransferPolicy\<Position\> (shared) | `0xa04784f7f6a63dcb9902b759e0e366eb1343388bb690588fd51b949733e34791` |
+| Collateral type | `0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC` (testnet USDC) |
 
 ---
 
