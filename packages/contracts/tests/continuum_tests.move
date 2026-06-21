@@ -4,10 +4,14 @@ module continuum::continuum_tests {
     use sui::test_scenario as ts;
     use sui::clock;
     use sui::coin::{Self, TreasuryCap, Coin};
+    use sui::kiosk::{Self, Kiosk, KioskOwnerCap};
+    use sui::transfer_policy::TransferPolicy;
+    use sui::sui::SUI;
     use continuum::fixed_point::{Self as fp, Fp};
     use continuum::gaussian;
     use continuum::market::{Self, Market, Registry, Position};
     use continuum::mock_usdc::{Self, MOCK_USDC};
+    use continuum::position_market;
     use pyth::price;
     use pyth::i64 as pyth_i64;
 
@@ -317,6 +321,240 @@ module continuum::continuum_tests {
             market::accept_ownership(&mut m, ts::ctx(&mut sc));
             assert!(market::owner(&m) == new_owner, 2);
             ts::return_shared(m);
+        };
+        ts::end(sc);
+    }
+
+    // ── Tradeable positions (Kiosk + TransferPolicy) ──────────────────────
+
+    /// Publish the protocol + the position TransferPolicy, create a MOCK_USDC
+    /// market closing at `resolves_at`, seed it, add liquidity, and buy a YES
+    /// position at strike 0. Leaves `admin` holding one `Position`.
+    fun setup_and_buy(sc: &mut ts::Scenario, admin: address, resolves_at: u64) {
+        {
+            market::init_for_testing(ts::ctx(sc));
+            mock_usdc::init_for_testing(ts::ctx(sc));
+            position_market::init_for_testing(ts::ctx(sc));
+        };
+        ts::next_tx(sc, admin);
+        {
+            let mut registry = ts::take_shared<Registry>(sc);
+            market::create_market<MOCK_USDC>(&mut registry, b"Kiosk market", 1_000_000_000_000_000, resolves_at, b"", ts::ctx(sc));
+            ts::return_shared(registry);
+        };
+        ts::next_tx(sc, admin);
+        {
+            let mut m = ts::take_shared<Market<MOCK_USDC>>(sc);
+            let mut cap = ts::take_from_sender<TreasuryCap<MOCK_USDC>>(sc);
+            market::set_distribution(&mut m, 0, false, 1_000_000_000_000_000_000, ts::ctx(sc));
+            let liq = mock_usdc::mint(&mut cap, 1_000_000_000, ts::ctx(sc));
+            market::add_liquidity(&mut m, liq, ts::ctx(sc));
+            let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(sc));
+            market::buy_yes(&mut m, stake, 0, false, ts::ctx(sc));
+            ts::return_to_sender(sc, cap);
+            ts::return_shared(m);
+        };
+    }
+
+    /// `admin` places its `Position` into a fresh kiosk and lists it at `price`.
+    /// The kiosk is shared (so buyers can purchase from it) and the owner cap is
+    /// returned to `admin`. Returns the listed position's object id.
+    fun list_in_shared_kiosk(sc: &mut ts::Scenario, admin: address, price: u64): ID {
+        ts::next_tx(sc, admin);
+        let pos = ts::take_from_sender<Position>(sc);
+        let pos_id = object::id(&pos);
+        let (mut k, cap) = kiosk::new(ts::ctx(sc));
+        position_market::list_position(&mut k, &cap, pos, price);
+        transfer::public_share_object(k);
+        transfer::public_transfer(cap, admin);
+        pos_id
+    }
+
+    #[test]
+    fun kiosk_resale_happy_path() {
+        let admin = @0xA;
+        let buyer = @0xB;
+        let mut sc = ts::begin(admin);
+        setup_and_buy(&mut sc, admin, 1_000_000); // closes far in the future → open
+        let pos_id = list_in_shared_kiosk(&mut sc, admin, 5_000_000);
+
+        // Buyer purchases the listed position while the market is open.
+        ts::next_tx(&mut sc, buyer);
+        {
+            let m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut k = ts::take_shared<Kiosk>(&sc);
+            let policy = ts::take_shared<TransferPolicy<Position>>(&sc);
+            let pay = coin::mint_for_testing<SUI>(5_000_000, ts::ctx(&mut sc));
+            position_market::buy_listed_position(&mut k, &policy, &m, pos_id, pay, ts::ctx(&mut sc));
+            // SUI proceeds accrued to the seller's kiosk.
+            assert!(kiosk::profits_amount(&k) == 5_000_000, 0);
+            ts::return_shared(m);
+            ts::return_shared(k);
+            ts::return_shared(policy);
+        };
+        // The buyer now owns the position.
+        ts::next_tx(&mut sc, buyer);
+        {
+            let pos = ts::take_from_sender<Position>(&sc);
+            let (_mid, _tok, _yes, amt) = market::position_info(&pos);
+            assert!(amt > 0, 1);
+            ts::return_to_sender(&sc, pos);
+        };
+        ts::end(sc);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 1, location = continuum::position_market)]
+    fun kiosk_resale_blocked_after_resolution() {
+        let admin = @0xA;
+        let buyer = @0xB;
+        let mut sc = ts::begin(admin);
+        setup_and_buy(&mut sc, admin, 1000);
+        let pos_id = list_in_shared_kiosk(&mut sc, admin, 5_000_000);
+
+        // Resolve the market (now past its scheduled close).
+        ts::next_tx(&mut sc, admin);
+        {
+            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut c = clock::create_for_testing(ts::ctx(&mut sc));
+            clock::set_for_testing(&mut c, 1000);
+            market::set_final_price(&mut m, 100_000_000_000_000_000_000, false, &c, ts::ctx(&mut sc));
+            clock::destroy_for_testing(c);
+            ts::return_shared(m);
+        };
+        // Purchase must abort with EMarketResolved (= 1): a settled position cannot be sold.
+        ts::next_tx(&mut sc, buyer);
+        {
+            let m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut k = ts::take_shared<Kiosk>(&sc);
+            let policy = ts::take_shared<TransferPolicy<Position>>(&sc);
+            let pay = coin::mint_for_testing<SUI>(5_000_000, ts::ctx(&mut sc));
+            position_market::buy_listed_position(&mut k, &policy, &m, pos_id, pay, ts::ctx(&mut sc));
+            ts::return_shared(m);
+            ts::return_shared(k);
+            ts::return_shared(policy);
+        };
+        ts::end(sc);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 0, location = continuum::position_market)]
+    fun kiosk_resale_wrong_market_aborts() {
+        let admin = @0xA;
+        let buyer = @0xB;
+        let mut sc = ts::begin(admin);
+        setup_and_buy(&mut sc, admin, 1_000_000); // market 0 holds the position
+        let pos_id = list_in_shared_kiosk(&mut sc, admin, 5_000_000);
+
+        // Create a second, unrelated market (id 1).
+        ts::next_tx(&mut sc, admin);
+        {
+            let mut registry = ts::take_shared<Registry>(&sc);
+            market::create_market<MOCK_USDC>(&mut registry, b"Other", 1_000_000_000_000_000, 1_000_000, b"", ts::ctx(&mut sc));
+            ts::return_shared(registry);
+        };
+
+        // Buying a market-0 position while supplying market 1 must abort (EWrongMarket = 0).
+        ts::next_tx(&mut sc, buyer);
+        {
+            let registry = ts::take_shared<Registry>(&sc);
+            let m1_addr = market::get_market(&registry, 1);
+            let m1 = ts::take_shared_by_id<Market<MOCK_USDC>>(&sc, object::id_from_address(m1_addr));
+            let mut k = ts::take_shared<Kiosk>(&sc);
+            let policy = ts::take_shared<TransferPolicy<Position>>(&sc);
+            let pay = coin::mint_for_testing<SUI>(5_000_000, ts::ctx(&mut sc));
+            position_market::buy_listed_position(&mut k, &policy, &m1, pos_id, pay, ts::ctx(&mut sc));
+            ts::return_shared(registry);
+            ts::return_shared(m1);
+            ts::return_shared(k);
+            ts::return_shared(policy);
+        };
+        ts::end(sc);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 2, location = continuum::position_market)]
+    fun kiosk_resale_decoy_item_aborts() {
+        let admin = @0xA;
+        let buyer = @0xB;
+        let mut sc = ts::begin(admin);
+        setup_and_buy(&mut sc, admin, 1_000_000); // posA → admin, market open
+        let pos_a_id = list_in_shared_kiosk(&mut sc, admin, 5_000_000);
+
+        // Admin buys a second (decoy) position in the same open market and hands it
+        // to the buyer.
+        ts::next_tx(&mut sc, admin);
+        {
+            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut cap = ts::take_from_sender<TreasuryCap<MOCK_USDC>>(&sc);
+            let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
+            market::buy_yes(&mut m, stake, 0, false, ts::ctx(&mut sc));
+            ts::return_to_sender(&sc, cap);
+            ts::return_shared(m);
+        };
+        ts::next_tx(&mut sc, admin);
+        {
+            let decoy = ts::take_from_sender<Position>(&sc);
+            transfer::public_transfer(decoy, buyer);
+        };
+
+        // Hand-crafted bypass attempt: purchase posA but prove the rule with the
+        // decoy (a valid, open, same-market position). Must abort with EWrongItem (2)
+        // because the proved position is not the item being transferred.
+        ts::next_tx(&mut sc, buyer);
+        {
+            let m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut k = ts::take_shared<Kiosk>(&sc);
+            let policy = ts::take_shared<TransferPolicy<Position>>(&sc);
+            let decoy = ts::take_from_sender<Position>(&sc);
+            let pay = coin::mint_for_testing<SUI>(5_000_000, ts::ctx(&mut sc));
+            let (bought, mut req) = kiosk::purchase<Position>(&mut k, pos_a_id, pay);
+            position_market::prove(&policy, &mut req, &decoy, &m);
+            // Unreachable — prove aborts above.
+            transfer::public_transfer(bought, buyer);
+            transfer::public_transfer(decoy, buyer);
+            sui::transfer_policy::confirm_request(&policy, req);
+            ts::return_shared(m);
+            ts::return_shared(k);
+            ts::return_shared(policy);
+        };
+        ts::end(sc);
+    }
+
+    #[test]
+    fun kiosk_take_and_claim_winner() {
+        let admin = @0xA;
+        let mut sc = ts::begin(admin);
+        setup_and_buy(&mut sc, admin, 1000);
+        let pos_id = list_in_shared_kiosk(&mut sc, admin, 5_000_000);
+
+        // Resolve YES wins (final 100 ≥ strike 0).
+        ts::next_tx(&mut sc, admin);
+        {
+            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut c = clock::create_for_testing(ts::ctx(&mut sc));
+            clock::set_for_testing(&mut c, 1000);
+            market::set_final_price(&mut m, 100_000_000_000_000_000_000, false, &c, ts::ctx(&mut sc));
+            clock::destroy_for_testing(c);
+            ts::return_shared(m);
+        };
+        // Owner reclaims the listed position from the kiosk and redeems it in one call.
+        ts::next_tx(&mut sc, admin);
+        {
+            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut k = ts::take_shared<Kiosk>(&sc);
+            let cap = ts::take_from_sender<KioskOwnerCap>(&sc);
+            position_market::take_and_claim(&mut k, &cap, &mut m, pos_id, ts::ctx(&mut sc));
+            ts::return_to_sender(&sc, cap);
+            ts::return_shared(k);
+            ts::return_shared(m);
+        };
+        // Payout coin landed with the claimer.
+        ts::next_tx(&mut sc, admin);
+        {
+            let payout = ts::take_from_sender<Coin<MOCK_USDC>>(&sc);
+            assert!(coin::value(&payout) > 0, 0);
+            ts::return_to_sender(&sc, payout);
         };
         ts::end(sc);
     }
