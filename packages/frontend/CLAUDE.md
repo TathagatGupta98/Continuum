@@ -1,6 +1,6 @@
 # Continuum Frontend — Architecture Reference
 
-This is the React + TypeScript frontend for Continuum (formerly OmniCurve), a Gaussian
+This is the React + TypeScript frontend for Continuum (formerly Continuum), a Gaussian
 continuous-distribution prediction-market protocol on **Sui**. The frontend connects to the
 backend API (port 3001), a Socket.io real-time feed, and the published `continuum` Move
 package on Sui testnet via **`@mysten/dapp-kit` + `@mysten/sui`**.
@@ -139,7 +139,7 @@ export const CLOCK_ID = '0x6' // shared Clock, required by every resolution entr
 export const target = (name) => `${PACKAGE_ID}::market::${name}` // Move-call target builder
 ```
 
-`marketTarget` / `MARKET_FUNCTIONS` / `MARKET_EVENTS` helpers live in `@omnicurve/types` —
+`marketTarget` / `MARKET_FUNCTIONS` / `MARKET_EVENTS` helpers live in `@continuum/types` —
 the single source of truth shared with the backend indexer.
 
 ### `src/config/sui.ts`
@@ -237,7 +237,7 @@ parity; seeding+deposit being atomic means the button shows `seeding` then `conf
 1. Build PTB; `title` as UTF-8 `vector<u8>`, `sigma_min` as WAD, `resolves_at` mandatory/immutable,
    and `price_feed_id` an optional 0x-hex Pyth feed id parsed to `vector<u8>` (empty = manual
    market). `create(sigmaMin, resolvesAtMs, meta?, priceFeedId?)` — the `CreateMarketModal` "Pyth
-   Price Feed" dropdown maps a selection to a feed id from `PYTH_FEED_IDS` (`@omnicurve/types`).
+   Price Feed" dropdown maps a selection to a feed id from `PYTH_FEED_IDS` (`@continuum/types`).
    A market bound to a feed settles trustlessly via `market::resolve_with_pyth` after close.
 2. Wait with `showEvents: true`; pull `market_id` from the `MarketCreated` event.
 3. `api.updateMarketMetadata(marketId, { title, category })` (retried; non-fatal) so the
@@ -389,8 +389,8 @@ VITE_COLLATERAL_TYPE=0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd
 ## Commands
 
 ```bash
-pnpm --filter @omnicurve/frontend dev      # Vite dev server (port 5173)
-pnpm --filter @omnicurve/frontend build    # tsc --noEmit + vite build
+pnpm --filter @continuum/frontend dev      # Vite dev server (port 5173)
+pnpm --filter @continuum/frontend build    # tsc --noEmit + vite build
 ```
 
 ## Explorer Links

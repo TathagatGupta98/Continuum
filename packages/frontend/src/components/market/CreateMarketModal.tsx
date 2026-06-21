@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { useCreateMarket } from '@/hooks/useCreateMarket'
 import { formatTxError, isUserRejection } from '@/lib/errors'
-import { PYTH_FEED_IDS } from '@omnicurve/types'
+import { PYTH_FEED_IDS } from '@continuum/types'
 
 // A market can optionally bind to a Pyth price feed; when set it settles
 // trustlessly on-chain (`resolve_with_pyth`) instead of via a manual/AI oracle.

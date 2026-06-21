@@ -1,4 +1,4 @@
-import { marketTarget, positionMarketTarget, MARKET_MODULE } from '@omnicurve/types'
+import { marketTarget, positionMarketTarget, MARKET_MODULE } from '@continuum/types'
 
 /**
  * On-chain references for the published `continuum` Move package (Sui edition).

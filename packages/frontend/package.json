@@ -1,5 +1,5 @@
 {
-  "name": "@omnicurve/frontend",
+  "name": "@continuum/frontend",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
   "dependencies": {
     "@mysten/dapp-kit": "^0.18.0",
     "@mysten/sui": "1.38.0",
-    "@omnicurve/types": "workspace:*",
+    "@continuum/types": "workspace:*",
     "@tanstack/react-query": "^5.62.7",
     "clsx": "^2.1.1",
     "d3": "^7.9.0",

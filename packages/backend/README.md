@@ -1,6 +1,6 @@
-# OmniCurve Backend
+# Continuum Backend
 
-Node.js / TypeScript API server for the OmniCurve prediction market protocol. Provides REST endpoints, real-time Socket.io updates, on-chain event watching via viem, and a Goldsky webhook receiver.
+Node.js / TypeScript API server for the Continuum prediction market protocol. Provides REST endpoints, real-time Socket.io updates, on-chain event watching via viem, and a Goldsky webhook receiver.
 
 ---
 
@@ -38,7 +38,7 @@ See [.env.example](.env.example) for the full list. Key vars:
 |----------|-------------|
 | `DATABASE_URL` | PostgreSQL connection string |
 | `RPC_URL` | Arbitrum Sepolia JSON-RPC endpoint |
-| `FACTORY_ADDRESS` | OmniCurveFactory contract address |
+| `FACTORY_ADDRESS` | ContinuumFactory contract address |
 | `DISTRIBUTION_AMM_ADDRESS` | AMM proxy for market #0 (used by chain watcher) |
 | `ROUTER_ADDRESS` | Router proxy for market #0 |
 | `CORS_ORIGINS` | Comma-separated allowed frontend origins (blank = localhost defaults) |

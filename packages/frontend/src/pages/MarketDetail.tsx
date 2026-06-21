@@ -21,7 +21,7 @@ import { formatTxError, isUserRejection } from '@/lib/errors'
 import { useToast } from '@/components/ui/Toast'
 import { target } from '@/config/contracts'
 import { explorerUrl } from '@/config/sui'
-import { PYTH_FEED_IDS } from '@omnicurve/types'
+import { PYTH_FEED_IDS } from '@continuum/types'
 
 /** Map a bound feed id back to its human label (e.g. "BTC/USD"). */
 function feedLabel(feedId?: string): string | undefined {

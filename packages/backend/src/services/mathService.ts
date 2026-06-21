@@ -15,7 +15,7 @@ export const calculateExpectedPrices = (x: number, mu: number, sigma: number) =>
   // CDF gives the area under the curve up to X
   const cdf = jStat.normal.cdf(x, mu, safeSigma);
   
-  // According to OmniCurve math:
+  // According to Continuum math:
   // P_NO = CDF(X)
   // P_YES = 1 - CDF(X)
   return {

@@ -1,7 +1,7 @@
 /**
  * Local oracle types for the backend.
  *
- * Mirrors the shared shapes in `@omnicurve/types` (EvidencePacket, AgentVote,
+ * Mirrors the shared shapes in `@continuum/types` (EvidencePacket, AgentVote,
  * OracleDecision, …). Kept local because the backend's tsconfig `rootDir` is
  * `./src`, so importing the workspace `types` source directly trips TS6059.
  * The canonical/shared copy lives in `packages/types` for the frontend.

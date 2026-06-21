@@ -1,4 +1,4 @@
-# OmniCurve Socket.io Events
+# Continuum Socket.io Events
 
 Connect to `http://localhost:3001` (or the deployed server URL) using any Socket.io v4 client.
 
