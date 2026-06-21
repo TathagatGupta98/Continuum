@@ -1,4 +1,3 @@
-
 <div align="center">
 
 # 🌊 Continuum
@@ -50,8 +49,11 @@ The core of **Continuum** translates the continuous Gaussian distribution into a
   * [2.3 Trade Execution Infrastructure](#23-trade-execution-infrastructure)
   * [2.4 Liquidity Provision Infrastructure](#24-liquidity-provision-infrastructure)
   * [2.5 Fee Distribution Infrastructure](#25-fee-distribution-infrastructure)
-  * [2.6 Market Resolution Infrastructure](#26-market-resolution-infrastructure)
-  * [2.7 Settlement Infrastructure](#27-settlement-infrastructure)
+  * [2.6 Market Resolution: Manual Two-Phase Timelock](#26-market-resolution-manual-two-phase-timelock)
+  * [2.7 Trustless On-Chain Resolution: The Pyth Oracle](#27-trustless-on-chain-resolution-the-pyth-oracle)
+  * [2.8 Decentralized Settlement: The Multi-Agent AI Oracle](#28-decentralized-settlement-the-multi-agent-ai-oracle)
+  * [2.9 Settlement Infrastructure](#29-settlement-infrastructure)
+  * [2.10 Tradeable Positions: The Kiosk Secondary Market](#210-tradeable-positions-the-kiosk-secondary-market)
 * [3. Features](#3-features)
 * [4. Technical Overview](#4-technical-overview)
 * **[Design & deep dive → DESIGN.md](./docs/DESIGN.md)**
@@ -169,7 +171,11 @@ This is maintained on-chain via three running accumulators updated on every trad
 
 ### 1.4 Settlement Against Reality
 
-$\mu$ is the market's *belief*, not the boundary it settles on. A market resolves against an externally-observed final price (set manually via `market::set_final_price` for this hackathon PoC — no oracle). Resolution can only begin once the market's scheduled close time (`resolves_at`, a `Clock` timestamp fixed at creation) has passed.
+$\mu$ is the market's *belief*, not the boundary it settles on. A market resolves against an externally-observed final price, never against $\mu$. Continuum now supports three resolution paths, all gated on the market's scheduled close time (`resolves_at`, a `Clock` timestamp fixed at creation) having passed:
+
+- **Trustless on-chain (price markets):** `market::resolve_with_pyth` reads a bound **Pyth Network** price feed directly on Sui — permissionless, no trusted submitter (see [2.7](#27-trustless-on-chain-resolution-the-pyth-oracle)).
+- **Multi-agent AI oracle (non-price markets):** an off-chain LLM ensemble derives the final value for news/sports/qualitative markets and either auto-submits or escalates to a human (see [2.8](#28-decentralized-settlement-the-multi-agent-ai-oracle)).
+- **Manual (owner):** the single-shot `market::set_final_price` or the two-phase `propose_resolution` → `execute_resolution` timelock (see [2.6](#26-market-resolution-manual-two-phase-timelock)).
 
 Each position is judged against **its own strike**:
 - A YES position at strike $X$ pays $1/token if and only if `final_price >= X`
@@ -195,7 +201,9 @@ On Sui, the protocol is a **single Move package** (`continuum`). Sui has no EVM-
 
 ### 2.1 High-Level Workflow
 
-![High Level Architecture](./images/HighLevelArch.png)
+The diagram below shows how the stack fits together on Sui: a React frontend talks to an Express backend over REST + Socket.io; the backend reads the chain with `@mysten/sui`; and on **Sui Testnet** the single `continuum` package exposes a shared `Registry` and one shared `Market<T>` object per market. What were four cooperating EVM contracts (AMM + Router + LP token + Factory) and a set of per-market EIP-1167 proxy clones collapse into **one module** and **plain shared objects** — every field that used to be a separate proxy now lives *inside* the `Market<T>` object.
+
+![Continuum Sui / Move architecture](./images/SuiArchitecture.png)
 
 **User Journey:**
 
@@ -279,9 +287,17 @@ Continuum uses a **MasterChef-style fee accumulator** to distribute trading fees
 
 This pattern provides O(1) fee distribution regardless of the number of LPs.
 
-### 2.6 Market Resolution Infrastructure
+### 2.6 Market Resolution: Manual Two-Phase Timelock
 
-Resolution uses a **two-phase timelock** to provide a dispute window. Both resolution paths additionally require the scheduled close `resolves_at` to have passed, enforced via the shared `&Clock`.
+Every market resolves against an externally-observed final price once its scheduled close `resolves_at` has passed (enforced via the shared `&Clock`). Continuum offers **three resolution paths**, and the settlement math (Section [2.9](#29-settlement-infrastructure)) is identical regardless of which one supplies `final_price`:
+
+| Path | Section | Who can call | Best for |
+|:-----|:--------|:-------------|:---------|
+| **Manual two-phase / single-shot** | 2.6 (this section) | Market owner | Any market; fallback |
+| **Pyth on-chain oracle** | [2.7](#27-trustless-on-chain-resolution-the-pyth-oracle) | Permissionless | Financial / price markets |
+| **Multi-agent AI oracle** | [2.8](#28-decentralized-settlement-the-multi-agent-ai-oracle) | Backend keeper | News / sports / qualitative markets |
+
+The manual path uses a **two-phase timelock** to provide a dispute window. Both manual entry points additionally require the scheduled close `resolves_at` to have passed, enforced via the shared `&Clock`.
 
 **Flow:**
 
@@ -292,9 +308,51 @@ Resolution uses a **two-phase timelock** to provide a dispute window. Both resol
 
 A single-shot `set_final_price(market, price_mag, price_neg, &Clock)` is also available to the owner for immediate resolution once `resolves_at` has passed.
 
-### 2.7 Settlement Infrastructure
+### 2.7 Trustless On-Chain Resolution: The Pyth Oracle
 
-After resolution, participants settle positions through a **pull-based claiming** model.
+Financial markets — anything tracking a price — settle **trustlessly and entirely on-chain** through the **Pyth Network** pull oracle on Sui. There is no trusted submitter: once a market has closed, *anyone* can finalize it by reading the bound price feed.
+
+At creation, a market may carry an optional **immutable 32-byte `price_feed_id`** (`create_market(..., price_feed_id, ...)`; empty = a manual-only market). Because the feed id is fixed for the market's lifetime, the settlement source can never be swapped out from under open positions.
+
+**The entry point — `resolve_with_pyth<T>(market, price_info_object, &Clock, ctx)` — is permissionless** and enforces three on-chain guards before it will write a price:
+
+1. **Closed:** `now >= resolves_at`, else aborts `EMarketNotClosed`.
+2. **Right feed:** the supplied `PriceInfoObject`'s on-chain identifier must equal the market's `price_feed_id`, else aborts `EWrongPriceFeed` — so a BTC market can't be settled against the ETH feed.
+3. **Fresh:** the price is read with `pyth::get_price_no_older_than` (`MAX_PRICE_AGE_SECS = 60`), else it is rejected as stale.
+
+When the guards pass, `pyth_price_to_fp` converts Pyth's signed `(price · 10^expo)` into the protocol's signed-WAD `final_price` and the market emits `MarketResolved`. Per-position settlement (`claim_winnings` / `release_losing_collateral`) is unchanged.
+
+**Pull-oracle mechanics.** Pyth is a *pull* oracle, so the price feed must be refreshed in the **same transaction** that resolves the market. The backend keeper (`chainService.resolveWithPyth`) uses `@pythnetwork/pyth-sui-js` (`SuiPriceServiceConnection` → Hermes, then `SuiPythClient.updatePriceFeeds`) to build **one atomic PTB** that first calls `pyth::update_single_price_feed` and then `resolve_with_pyth`, guaranteeing the staleness check always sees a fresh price.
+
+> **Testnet beta channel.** Sui **testnet** Pyth/Wormhole run a different Wormhole guardian set than mainnet, so updates must come from the **beta Hermes** (`https://hermes-beta.pyth.network`) and testnet feed ids differ from mainnet (e.g. testnet BTC/USD ≠ mainnet BTC/USD). The defaults (`HERMES_ENDPOINT`, `PYTH_FEED_IDS`) target beta accordingly.
+
+![Pyth oracle — trustless on-chain settlement](./images/PythOracleFlow.png)
+
+### 2.8 Decentralized Settlement: The Multi-Agent AI Oracle
+
+Markets that **don't** track an on-chain price — news, sports, qualitative or open-ended questions — can be resolved by a **multi-agent LLM settlement oracle** that lives in the backend. It is a port of Kota, *Multi-Agent AI Oracle Systems for Prediction Market Resolution* ([arXiv:2605.30802](https://arxiv.org/pdf/2605.30802)), implementing the paper's winning **Architecture A (independent aggregation)** with **agreement-based escalation**. Deliberation/debate is deliberately *not* used — the paper shows it degrades accuracy by propagating persuasive errors.
+
+The AI oracle only ever *drives* the existing manual on-chain entry point (`set_final_price`); the contracts are unchanged, and it is **gated off by default** (`ORACLE_ENABLED=false`). The deeper design rationale lives in [DESIGN.md §8](./docs/DESIGN.md#8-future-plans-an-ai-oracle-for-resolution).
+
+**Pipeline (keeper-driven):**
+
+1. **Scan.** A worker scans DB markets that are past `resolves_at`, not yet resolved on-chain, with no prior resolution attempt.
+2. **Gather evidence.** `retrievalService` builds a single shared, date-constrained evidence packet via Groq's agentic `groq/compound-mini` (built-in web search).
+3. **Independent ensemble.** One sub-agent per `ORACLE_MODELS` id runs **in parallel over the same evidence** on GroqCloud — the default is a cross-family set (`llama-3.3-70b-versatile`, `meta-llama/llama-4-scout-17b-16e-instruct`, `openai/gpt-oss-120b`, `openai/gpt-oss-20b`) chosen to decorrelate errors. Each agent emits a scalar `{value, confidence}`.
+4. **Aggregate.** `aggregationService` computes a **confidence-weighted aggregate** plus an agreement check: `compositeScore = 1[agreement] + meanConfidence`.
+5. **Decide.**
+   - Agents agree within tolerance **and** mean confidence ≥ `ORACLE_CONFIDENCE_THRESHOLD` (0.91) → **`AUTO_RESOLVED`**.
+   - Otherwise → **`ESCALATED`** to human arbitration.
+   - Zero usable estimates → **`FAILED`**.
+6. **Submit.** When `ORACLE_AUTO_SUBMIT=true`, an `AUTO_RESOLVED` decision is signed on-chain via `set_final_price` (`ORACLE_SIGNER_KEY`, which must be the market owner) → **`SUBMITTED`**. The event poller then writes `Market.finalPrice` from `MarketResolved`, and positions settle per-position via `claim_winnings` as usual.
+
+Because auto-resolution writes an irreversible price, the thresholds are strict and an uncertain oracle **degrades to the manual flow** rather than guessing.
+
+![Multi-agent AI oracle — settlement](./images/AiOracleFlow.png)
+
+### 2.9 Settlement Infrastructure
+
+After resolution — by *any* of the three paths above — participants settle positions through a **pull-based claiming** model.
 
 **For Winners:**
 
@@ -307,6 +365,25 @@ After resolution, participants settle positions through a **pull-based claiming*
 - `release_losing_collateral(market, target_mag, target_neg, is_yes)` — permissionless
 - Frees LP collateral that was locked against a position that lost
 - Returns the collateral to the available liquidity pool for LP withdrawal
+
+### 2.10 Tradeable Positions: The Kiosk Secondary Market
+
+Because every bet is an **owned `Position` object** (not an ERC-1155 balance entry), a holder can do something binary AMMs make awkward: **sell a belief before the market resolves**. Continuum exposes a secondary "belief market" for positions using **Sui Kiosk** + a shared **`TransferPolicy<Position>`**, all in `continuum::position_market`.
+
+**Core functions:** `list_position`, `delist_position`, `buy_listed_position`, `take_and_claim`.
+
+**Flow:**
+
+1. **List.** The holder calls `list_position(kiosk, price)`, which places and locks the `Position` in their Kiosk. It is now **LISTED** at a USDC price — an open, on-chain secondary market for that exact strike/direction belief.
+2. **(Optional) Delist.** The seller can `delist_position` at any time to pull the listing and return the `Position` to plain ownership.
+3. **Buy.** A buyer calls `buy_listed_position`, paying the listed price in USDC. The Kiosk yields the `Position` **plus a `TransferRequest<Position>`** that must be resolved before ownership can transfer.
+4. **The market-open rule.** Confirming that request requires satisfying the shared `TransferPolicy<Position>`, whose rule asserts the underlying **market is still OPEN** (not resolved). If the market has already resolved, the purchase **aborts** — you cannot trade a position whose outcome is already known. (After resolution you don't *trade* a position, you *claim* it.)
+5. **Settle the trade.** With the rule satisfied, `confirm_request` lets ownership transfer atomically: the seller receives USDC and the buyer becomes the new owner of the `Position`.
+6. **Claim at resolution.** Once the market resolves, the new owner uses `take_and_claim` to take the position out of the Kiosk and redeem winnings (1 USDC/token) in one step.
+
+The `TransferPolicy<Position>` (and its `TransferPolicyCap`) are created at publish by `position_market::init`; the shared policy object is required to confirm any Kiosk purchase of a `Position`. This makes "tradeable only while the market is live" a **structural** guarantee rather than a runtime check sprinkled across call sites.
+
+![Tradeable positions — Sui Kiosk workflow](./images/KioskFlow.png)
 
 ---
 
@@ -327,6 +404,12 @@ After resolution, participants settle positions through a **pull-based claiming*
 - **Non-Transferable LP Positions:** LP shares live as `LpAccount` rows in a per-market `Table` keyed by address — there is no token to transfer, simplifying fee accounting by construction.
 
 - **Two-Phase Resolution with Timelock:** 24-hour dispute window between proposal and execution, gated by a scheduled `resolves_at` close time and enforced with Sui's shared `Clock`.
+
+- **Trustless Pyth Settlement:** Price markets settle permissionlessly on-chain via `resolve_with_pyth`, which reads a bound **Pyth Network** feed — no trusted submitter, with feed-id, close-time, and 60-second freshness guards.
+
+- **Multi-Agent AI Oracle:** Non-price markets resolve via an independent LLM ensemble (Architecture A, confidence-weighted aggregation, agreement-based escalation) that auto-submits high-confidence results and escalates the rest to human arbitration.
+
+- **Tradeable Positions (Kiosk):** Owned `Position` objects can be resold on a secondary belief market via Sui Kiosk; a `TransferPolicy<Position>` market-open rule structurally blocks trading a resolved position.
 
 - **Generic Collateral:** `Market<phantom T>` works with any `Coin<T>` — mock USDC locally, real USDC on mainnet, with no token-address wiring.
 
@@ -476,3 +559,5 @@ This project is licensed under the **MIT License**.
 - **Distribution Market Design:** [Paradigm Distribution Market Research](https://www.paradigm.xyz/2024/12/distribution-markets)
 - **Prediction Market Design:** [Paradigm PM-AMM Research](https://www.paradigm.xyz/2024/11/pm-amm)
 - **Multi-Agent AI Oracle (planned resolution layer):** Tarun Kota, *Design and Evaluation of Multi-Agent AI Oracle Systems for Prediction Market Resolution* — [arXiv:2605.30802](https://arxiv.org/pdf/2605.30802)
+- **Pyth Network (pull oracle on Sui):** [Pyth on Sui Docs](https://docs.pyth.network/price-feeds/use-real-time-data/sui)
+- **Sui Kiosk & TransferPolicy:** [Sui Kiosk Docs](https://docs.sui.io/standards/kiosk)
