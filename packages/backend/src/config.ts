@@ -13,16 +13,18 @@ dotenv.config();
  */
 const SUI_HEX = /^0x[a-fA-F0-9]{1,64}$/;
 
+// Treat an empty-string env var the same as "unset" so a blank value left in a
+// PaaS dashboard (e.g. Render) doesn't bypass the zod default below.
+const emptyToUndefined = (v: unknown) => (v === '' ? undefined : v);
+
 const envSchema = z.object({
   // ─── Server ───
   PORT: z
-    .string()
-    .default('3001')
+    .preprocess(emptyToUndefined, z.string().default('3001'))
     .transform(Number)
     .pipe(z.number().int().positive()),
   WS_PORT: z
-    .string()
-    .default('3002')
+    .preprocess(emptyToUndefined, z.string().default('3002'))
     .transform(Number)
     .pipe(z.number().int().positive()),
 
