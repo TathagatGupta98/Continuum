@@ -55,6 +55,11 @@ export interface Position {
   direction: 'ABOVE' | 'BELOW'
   tokensMinted: number
   stakeAmount: number
+  // Current USD value: while active = tokens × live price; once resolved =
+  // tokens (each winning token redeems $1) for a winner, or 0 for a loser.
+  currentValue: number
+  // Settlement outcome for this position (backend-computed against finalPrice).
+  status: 'active' | 'won' | 'lost'
   market?: Market
 }
 

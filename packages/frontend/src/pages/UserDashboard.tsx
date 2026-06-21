@@ -128,7 +128,7 @@ export default function UserDashboard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className={`border-b transition-colors duration-300 ${T.tableHead}`}>
-                  {['Market', 'Question', 'Direction', 'Strike', 'Tokens', 'Value', 'Status'].map((h) => (
+                  {['Market', 'Direction', 'Strike', 'Tokens', 'Stake', 'Value', 'P&L', 'Result'].map((h) => (
                     <th
                       key={h}
                       className={`px-4 py-3 text-left text-[10px] font-display tracking-widest uppercase transition-colors duration-300 ${T.tableHeadTxt}`}
@@ -139,7 +139,13 @@ export default function UserDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {positions.map((pos) => (
+                {positions.map((pos) => {
+                  const stakeUsd = pos.stakeAmount / 1e6
+                  // P&L: realized once resolved (value − stake), unrealized while
+                  // active. A loser's value is 0, so P&L = −stake.
+                  const pnl = pos.currentValue - stakeUsd
+                  const pnlUp = pnl >= 0
+                  return (
                   <tr
                     key={pos.positionId}
                     className={`border-b transition-colors duration-200 ${T.tableRow}`}
@@ -153,14 +159,6 @@ export default function UserDashboard() {
                       </Link>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`font-mono text-xs ${pos.direction === 'ABOVE' ? 'text-[#0B7A52]' : 'text-[#B42318]'}`}>
-                        {pos.direction === 'ABOVE'
-                          ? `Final price ≥ $${pos.targetValueX.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-                          : `Final price < $${pos.targetValueX.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-                        }
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
                       <Badge variant={pos.direction === 'ABOVE' ? 'yes' : 'no'}>
                         {pos.direction === 'ABOVE' ? 'YES' : 'NO'}
                       </Badge>
@@ -171,18 +169,29 @@ export default function UserDashboard() {
                     <td className={`px-4 py-3 font-mono text-xs transition-colors duration-300 ${T.cellMuted}`}>
                       {pos.tokensMinted.toFixed(2)}
                     </td>
+                    <td className={`px-4 py-3 font-mono text-xs transition-colors duration-300 ${T.cellMuted}`}>
+                      ${stakeUsd.toFixed(2)}
+                    </td>
                     <td className={`px-4 py-3 font-mono text-xs transition-colors duration-300 ${T.cellData}`}>
-                      ${(pos.stakeAmount / 1e6).toFixed(2)}
+                      ${pos.currentValue.toFixed(2)}
                     </td>
                     <td className="px-4 py-3">
-                      {pos.market?.isResolved ? (
-                        <Badge variant="resolved">Resolved</Badge>
+                      <span className={`font-mono text-xs ${pnlUp ? 'text-[#0B7A52]' : 'text-[#B42318]'}`}>
+                        {pnlUp ? '+' : '−'}${Math.abs(pnl).toFixed(2)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {pos.status === 'won' ? (
+                        <Badge variant="yes">WON</Badge>
+                      ) : pos.status === 'lost' ? (
+                        <Badge variant="no">LOST</Badge>
                       ) : (
                         <Badge variant="live">Active</Badge>
                       )}
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>

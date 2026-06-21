@@ -115,17 +115,16 @@ export default function MarketDetail() {
   // Post-resolution LP withdrawal (liquidity + accrued fees) in flight.
   const [lpClaiming, setLpClaiming] = useState(false)
 
-  // Pyth settlement state: whether the market binds a price feed and has closed.
-  // Drives the "Resolve via Pyth" trustless-settlement button below.
+  // Pyth settlement state: whether the market binds a price feed and its close
+  // time. A bound market settles trustlessly + automatically via the backend
+  // keeper once it closes (now ≥ resolves_at) — this just drives the passive
+  // status card below (no manual trigger).
   const { data: pythState } = useQuery({
     queryKey: ['market-pyth-state', market?.objectId],
     enabled: !!market?.objectId,
     staleTime: 30_000,
     queryFn: () => getMarketPythState(market!.objectId),
   })
-
-  const [pythResolving, setPythResolving] = useState(false)
-  const [pythError, setPythError] = useState<string | undefined>()
 
   // The backend doesn't persist the market owner; read it from the shared
   // `Market<T>` object to gate the owner-controls panel.
@@ -182,39 +181,13 @@ export default function MarketDetail() {
   const finalPrice = market.finalPrice
   const isOwner = !!address && !!onChainOwner && address.toLowerCase() === onChainOwner
 
-  // A Pyth-bound market that hasn't settled can be resolved trustlessly on-chain
-  // once it has closed (now ≥ resolves_at). The contract aborts before close, so
-  // we gate the button on it and otherwise show when the market opens for resolution.
+  // A Pyth-bound market settles automatically (no manual trigger): the backend
+  // keeper calls `resolve_with_pyth` on-chain once the market closes
+  // (now ≥ resolves_at). We only surface a passive status card from this.
   const hasPriceFeed = !!pythState?.hasPriceFeed
   const closeMs = pythState?.resolvesAt ?? 0
   const isClosed = closeMs > 0 && Date.now() >= closeMs
-  const showPythResolve = !resolved && hasPriceFeed
-
-  // Refresh the bound Pyth feed and call `resolve_with_pyth` via the backend
-  // (permissionless; the backend signer pays gas). The event poller then writes
-  // the final price, which arrives over the socket / on refetch.
-  const handleResolvePyth = async () => {
-    setPythError(undefined)
-    setPythResolving(true)
-    try {
-      await api.resolvePyth(String(market.marketId))
-      // Settlement is async on the indexer; refetch market + portfolio so the
-      // resolved banner and claimable positions appear.
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['market', marketId] }),
-        queryClient.invalidateQueries({ queryKey: ['markets'] }),
-        queryClient.invalidateQueries({ queryKey: ['portfolio', address] }),
-        queryClient.invalidateQueries({ queryKey: ['market-pyth-state', market.objectId] }),
-      ])
-    } catch (e) {
-      setPythError(e instanceof Error ? formatTxError(e) : 'Pyth resolution failed')
-    } finally {
-      setPythResolving(false)
-    }
-  }
-
-  // Resolution is handled off-app for now — an AI oracle will drive it (TODO).
-  // The owner-facing two-phase resolution panel was removed pending that work.
+  const showPythStatus = !resolved && hasPriceFeed
 
   // Redeem one winning Position object for collateral (consumes the object).
   // Surfaces success/failure via toasts and refetches portfolio + market so the
@@ -390,8 +363,8 @@ export default function MarketDetail() {
         </div>
       </div>
 
-      {/* ── Pyth trustless-resolution panel ────────────────────────── */}
-      {showPythResolve && (
+      {/* ── Pyth auto-settlement status (no manual trigger) ────────── */}
+      {showPythStatus && (
         <div className={`rounded-xl border p-5 flex items-center justify-between flex-wrap gap-4 transition-colors duration-300 ${T.infoCard}`}>
           <div>
             <p className={`font-display font-700 text-base transition-colors duration-300 ${T.heading}`}>
@@ -399,22 +372,16 @@ export default function MarketDetail() {
             </p>
             <p className={`text-xs font-mono mt-1 transition-colors duration-300 ${T.resolvedSub}`}>
               {isClosed
-                ? 'This market is closed. Anyone can settle it trustlessly from the bound Pyth feed.'
-                : `Resolution opens at ${closeMs ? new Date(closeMs).toLocaleString() : '—'} (market still live).`}
+                ? 'Market closed — settling automatically from the bound Pyth feed…'
+                : `Settles automatically via Pyth at ${closeMs ? new Date(closeMs).toLocaleString() : '—'}.`}
             </p>
-            {pythError && (
-              <p className={`text-xs font-mono mt-2 ${T.errorText}`}>{pythError}</p>
-            )}
           </div>
-          <Button
-            variant="primary"
-            size="sm"
-            loading={pythResolving}
-            disabled={!isClosed || pythResolving}
-            onClick={handleResolvePyth}
-          >
-            {isClosed ? 'Resolve via Pyth' : 'Not yet closed'}
-          </Button>
+          <div className="flex items-center gap-2">
+            <span className={`w-1.5 h-1.5 rounded-full animate-pulse transition-colors duration-300 ${T.liveIndicator}`} />
+            <span className={`text-xs font-mono transition-colors duration-300 ${T.liveTxt}`}>
+              {isClosed ? 'Settling…' : 'Awaiting close'}
+            </span>
+          </div>
         </div>
       )}
 
