@@ -5,10 +5,15 @@ import { calculatePricePreview } from '../services/mathService';
 
 let io: Server;
 
+// Mirrors the REST CORS allowlist in server.ts — same CORS_ORIGINS env var.
+const allowedOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
+  : ['http://localhost:3000', 'http://localhost:5173'];
+
 export const initializeSocket = (server: HttpServer) => {
   io = new Server(server, {
     cors: {
-      origin: '*', // Adjust for production environments
+      origin: allowedOrigins,
       methods: ['GET', 'POST'],
     },
   });
