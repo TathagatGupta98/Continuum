@@ -360,9 +360,9 @@ ownership), and LP shares are table rows (non-transferable for free). Less surfa
 cross-contract trust edges, and no ABI to keep in sync between contracts.
 
 **Generic collateral via a phantom type.** `Market<phantom T>` parameterizes the whole market over
-its collateral coin type. Local and testnet markets use `mock_usdc::MOCK_USDC`; mainnet markets use
-the real USDC coin type — with no token-address configuration and no risk of pointing a market at
-the wrong ERC-20, because the type system fixes it.
+its collateral coin type. Every market uses the real USDC coin type (the protocol mints no coin of
+its own) — with no token-address configuration and no risk of pointing a market at the wrong
+ERC-20, because the type system fixes it.
 
 **Pre-update pricing is just statement ordering.** The "price against the curve before the bet
 shifts it" guarantee (Section 6.3) reduces, on Sui, to reading `market.mu`/`market.sigma` before
