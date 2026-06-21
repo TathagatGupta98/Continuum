@@ -61,6 +61,17 @@ export function usdcDisplayToRaw(n: number): bigint {
   return BigInt(Math.round(n * 1_000_000))
 }
 
+// User-typed "1.5" SUI → 1_500_000_000n (MIST, 9 decimals). Kiosk listing
+// prices and purchases are SUI-denominated.
+export function suiToMist(n: number): bigint {
+  return BigInt(Math.round(n * 1_000_000_000))
+}
+
+// MIST → display SUI float.
+export function mistToSui(mist: bigint): number {
+  return Number(mist) / 1_000_000_000
+}
+
 // Format USDC raw → display string "$1,234.56"
 export function formatUsdc(raw: bigint, decimals = 2): string {
   const val = Number(raw) / 1e6

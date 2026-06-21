@@ -3,7 +3,7 @@ import { Transaction, coinWithBalance } from '@mysten/sui/transactions'
 import { useCurrentAccount, useSignAndExecuteTransaction } from '@mysten/dapp-kit'
 import { useQueryClient } from '@tanstack/react-query'
 import { suiClient } from '@/lib/sui'
-import { target, COLLATERAL_TYPE } from '@/config/contracts'
+import { target, COLLATERAL_TYPE, CLOCK_ID } from '@/config/contracts'
 import { floatToWadParts } from '@/lib/math'
 
 // 'approving'/'approved' are retained from the EVM flow for type-compatibility,
@@ -49,7 +49,7 @@ export function useTrade({ marketId, objectId, collateralType }: UseTradeOptions
         const fn = params.direction === 'yes' ? 'buy_yes' : 'buy_no'
 
         const tx = new Transaction()
-        // buy_*<T>(market, payment: Coin<T>, target_mag, target_neg)
+        // buy_*<T>(market, payment: Coin<T>, target_mag, target_neg, clock)
         tx.moveCall({
           target: target(fn),
           typeArguments: [coinType],
@@ -60,6 +60,9 @@ export function useTrade({ marketId, objectId, collateralType }: UseTradeOptions
             coinWithBalance({ type: coinType, balance: params.stakeUsdc }),
             tx.pure.u256(mag),
             tx.pure.bool(neg),
+            // Shared Clock (0x6): the contract closes trading once the market is
+            // resolved or its scheduled close (resolves_at) has passed.
+            tx.object(CLOCK_ID),
           ],
         })
 

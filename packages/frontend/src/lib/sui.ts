@@ -108,11 +108,151 @@ export async function getOwnedPositions(
   return out
 }
 
+export interface UserKiosk {
+  /** The shared `Kiosk` object id that holds the user's listed positions. */
+  kioskId: string
+  /** The owned `KioskOwnerCap` proving control of that kiosk. */
+  capId: string
+}
+
+/**
+ * Resolve the connected wallet's Kiosk by reading the `KioskOwnerCap` it owns
+ * (the cap's `for` field points at its `Kiosk`). The Kiosk-based position market
+ * needs both the kiosk id and the cap for list/delist/take flows; there is no
+ * Kiosk SDK installed, so we read the cap object directly.
+ *
+ * Returns the first cap found — the position market assumes one kiosk per user
+ * (the common case). Returns `null` when the user has no kiosk yet, in which
+ * case `usePositionMarket.list` creates one inside the listing PTB.
+ */
+export async function getUserKiosk(owner: string): Promise<UserKiosk | null> {
+  let cursor: string | null | undefined = undefined
+  do {
+    const page = await suiClient.getOwnedObjects({
+      owner,
+      filter: { StructType: '0x2::kiosk::KioskOwnerCap' },
+      options: { showContent: true },
+      cursor,
+    })
+    for (const o of page.data) {
+      const content = o.data?.content
+      if (!content || content.dataType !== 'moveObject') continue
+      const kioskId = (content.fields as Record<string, unknown>).for
+      if (typeof kioskId === 'string' && o.data?.objectId) {
+        return { kioskId, capId: o.data.objectId }
+      }
+    }
+    cursor = page.hasNextPage ? page.nextCursor : null
+  } while (cursor)
+  return null
+}
+
 /** On-chain owner of a `Market<T>` (used to gate the owner-controls panel). */
 export async function getMarketOwner(objectId: string): Promise<string> {
   const obj = await suiClient.getObject({ id: objectId, options: { showContent: true } })
   const f = (obj.data?.content as { fields?: Record<string, unknown> } | undefined)?.fields
   return String(f?.owner ?? '').toLowerCase()
+}
+
+export interface PositionListing {
+  /** The seller's `Kiosk` holding the listed position. */
+  kioskId: string
+  /** The listed `Position` object id. */
+  positionId: string
+  /** Ask price in MIST (SUI, 9 decimals). */
+  priceMist: bigint
+  /** The market the position belongs to. */
+  marketId: string
+  /** Strike price (signed float). */
+  strike: number
+  /** YES (ABOVE) when true, NO (BELOW) when false. */
+  isYes: boolean
+  /** Tokens held (pays 1 USDC/token if it wins). */
+  tokens: number
+}
+
+/**
+ * Active `Position` listings on the Kiosk secondary market, reconstructed from
+ * the framework's Kiosk events for the `Position` type (there is no Kiosk SDK or
+ * dedicated indexer). Replays `ItemListed` / `ItemPurchased` / `ItemDelisted` in
+ * chronological order — the last event per (kiosk, item) decides whether it is
+ * still listed — then enriches each survivor with its on-chain position fields.
+ * Optionally filtered to one market.
+ */
+export async function getPositionListings(
+  marketId?: string | number,
+): Promise<PositionListing[]> {
+  const T = `${PACKAGE_ID}::market::Position`
+  const kinds = ['ItemListed', 'ItemPurchased', 'ItemDelisted'] as const
+  type Ev = { kind: (typeof kinds)[number]; kiosk: string; id: string; price?: string; ts: number; seq: bigint }
+  const events: Ev[] = []
+
+  for (const kind of kinds) {
+    let cursor: { txDigest: string; eventSeq: string } | null | undefined = undefined
+    do {
+      const page = await suiClient.queryEvents({
+        query: { MoveEventType: `0x2::kiosk::${kind}<${T}>` },
+        cursor,
+        limit: 200,
+        order: 'ascending',
+      })
+      for (const e of page.data) {
+        const pj = e.parsedJson as { kiosk: string; id: string; price?: string }
+        events.push({
+          kind,
+          kiosk: pj.kiosk,
+          id: pj.id,
+          price: pj.price,
+          ts: Number(e.timestampMs ?? 0),
+          seq: BigInt(e.id.eventSeq),
+        })
+      }
+      cursor = page.hasNextPage ? page.nextCursor : null
+    } while (cursor)
+  }
+
+  // Replay chronologically; only `ItemListed` (re)activates, the others clear.
+  events.sort((a, b) => (a.ts !== b.ts ? a.ts - b.ts : a.seq < b.seq ? -1 : a.seq > b.seq ? 1 : 0))
+  const active = new Map<string, { kiosk: string; id: string; price: string }>()
+  for (const e of events) {
+    const key = `${e.kiosk}:${e.id}`
+    if (e.kind === 'ItemListed') active.set(key, { kiosk: e.kiosk, id: e.id, price: e.price ?? '0' })
+    else active.delete(key)
+  }
+  if (active.size === 0) return []
+
+  const survivors = [...active.values()]
+  const objs = await suiClient.multiGetObjects({
+    ids: survivors.map((s) => s.id),
+    options: { showContent: true },
+  })
+  const byId = new Map<string, Record<string, unknown>>()
+  for (const o of objs) {
+    const c = o.data?.content
+    if (o.data && c && c.dataType === 'moveObject') {
+      byId.set(o.data.objectId, c.fields as Record<string, unknown>)
+    }
+  }
+
+  const want = marketId != null ? String(marketId) : null
+  const out: PositionListing[] = []
+  for (const s of survivors) {
+    const f = byId.get(s.id)
+    if (!f) continue // object vanished (purchased in same window) — skip
+    const mId = String(f.market_id ?? '')
+    if (want != null && mId !== want) continue
+    const amountWad = BigInt((f.amount_wad as string) ?? 0)
+    out.push({
+      kioskId: s.kiosk,
+      positionId: s.id,
+      priceMist: BigInt(s.price),
+      marketId: mId,
+      strike: fpFieldToFloat(f.target_x),
+      isYes: Boolean(f.is_yes),
+      tokens: Number(amountWad) / WAD,
+    })
+  }
+  return out
 }
 
 export interface MarketPythState {

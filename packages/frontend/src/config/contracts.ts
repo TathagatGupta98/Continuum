@@ -1,4 +1,4 @@
-import { marketTarget, MARKET_MODULE } from '@omnicurve/types'
+import { marketTarget, positionMarketTarget, MARKET_MODULE } from '@omnicurve/types'
 
 /**
  * On-chain references for the published `continuum` Move package (Sui edition).
@@ -10,11 +10,11 @@ import { marketTarget, MARKET_MODULE } from '@omnicurve/types'
  */
 export const PACKAGE_ID =
   (import.meta.env.VITE_PACKAGE_ID as string) ??
-  '0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549'
+  '0x024febde4e1e8e5d7a259ec836de90ebd596289e89a38c199cb7414f56f00200'
 
 export const REGISTRY_ID =
   (import.meta.env.VITE_REGISTRY_ID as string) ??
-  '0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23'
+  '0x3c585041337389132541ecee0c2d1425ad539e147d18ba1d34f768dd4f1c8cab'
 
 // Circle's official testnet USDC — anyone can fund it via faucet.circle.com or
 // `sui client faucet --coin-type usdc`, no protocol-controlled mint required.
@@ -25,7 +25,25 @@ export const COLLATERAL_TYPE =
 /** The shared `Clock` object — required by every resolution entry function. */
 export const CLOCK_ID = '0x6'
 
+/**
+ * The shared `TransferPolicy<Position>` created at publish by
+ * `position_market::init`. Required to confirm a Kiosk purchase of a `Position`
+ * (it carries the market-open rule). The fallback is the live testnet policy;
+ * override with `VITE_TRANSFER_POLICY_ID` on a redeploy.
+ */
+export const TRANSFER_POLICY_ID =
+  (import.meta.env.VITE_TRANSFER_POLICY_ID as string) ??
+  '0x80771b4652ad8cec31c94fc0237422890900227e18f69579400d28d5aeba8b74'
+
+/** Sui framework Kiosk module + the canonical types we reference in PTBs. */
+export const KIOSK_TYPE = '0x2::kiosk::Kiosk'
+export const SUI_COIN_TYPE = '0x2::sui::SUI'
+export const kioskTarget = (name: string) => `0x2::kiosk::${name}` as const
+
 /** Build a `package::market::<name>` Move-call target. */
 export const target = (name: string) => marketTarget(PACKAGE_ID, name)
+
+/** Build a `package::position_market::<name>` Move-call target. */
+export const positionTarget = (name: string) => positionMarketTarget(PACKAGE_ID, name)
 
 export { MARKET_MODULE }

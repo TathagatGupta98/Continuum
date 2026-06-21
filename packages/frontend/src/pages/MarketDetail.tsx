@@ -10,6 +10,7 @@ import { useTheme } from '@/hooks/useTheme'
 import { GaussianChart } from '@/components/market/GaussianChart'
 import { StakerPanel } from '@/components/market/StakerPanel'
 import { LPPanel } from '@/components/market/LPPanel'
+import { SecondaryMarket } from '@/components/market/SecondaryMarket'
 import { Tabs } from '@/components/ui/Tabs'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -527,6 +528,21 @@ export default function MarketDetail() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* ── Secondary market: tradeable positions (Kiosk) ───────────────── */}
+      <div className="mt-8">
+        <SecondaryMarket
+          market={{
+            objectId: market.objectId,
+            marketId: market.marketId,
+            collateralType: market.collateralType,
+          }}
+          mu={mu}
+          sigma={sigma}
+          resolved={resolved}
+          finalPrice={finalPrice}
+        />
       </div>
 
     </div>
