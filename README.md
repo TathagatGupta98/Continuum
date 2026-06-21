@@ -25,13 +25,13 @@ The core of **Continuum** translates the continuous Gaussian distribution into a
 
 ## Addresses (Sui Testnet)
 
-`Package:` [0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549](https://suiscan.xyz/testnet/object/0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549)
+`Package:` [0x024febde4e1e8e5d7a259ec836de90ebd596289e89a38c199cb7414f56f00200](https://suiscan.xyz/testnet/object/0x024febde4e1e8e5d7a259ec836de90ebd596289e89a38c199cb7414f56f00200)
 
-`Registry (shared):` [0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23](https://suiscan.xyz/testnet/object/0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23)
+`Registry (shared):` [0x3c585041337389132541ecee0c2d1425ad539e147d18ba1d34f768dd4f1c8cab](https://suiscan.xyz/testnet/object/0x3c585041337389132541ecee0c2d1425ad539e147d18ba1d34f768dd4f1c8cab)
 
-`Market #0 {BTC price @ 2026} (shared):` [0x77550db6ff83d512ca2763d8af9d6aaee13ba8364e5c83755d66d446a90ea0dc](https://suiscan.xyz/testnet/object/0x77550db6ff83d512ca2763d8af9d6aaee13ba8364e5c83755d66d446a90ea0dc)
+`Market #0 {BTC price @ 2026} (shared):` [0x7c17c24831ea92ec91389e61f5399c3005d9a1c511ceb76329e0a6b3825d7a09](https://suiscan.xyz/testnet/object/0x7c17c24831ea92ec91389e61f5399c3005d9a1c511ceb76329e0a6b3825d7a09)
 
-`Collateral type:` `0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549::mock_usdc::MOCK_USDC`
+`Collateral type:` `0x024febde4e1e8e5d7a259ec836de90ebd596289e89a38c199cb7414f56f00200::mock_usdc::MOCK_USDC`
 
 ## Table of Contents
 
@@ -410,7 +410,7 @@ The seed discovers every market from `MarketCreated` events; the event poller th
 
 ```bash
 # Start the Vite dev server
-pnpm --filter @omnicurve/frontend dev
+pnpm --filter @continuum/frontend dev
 ```
 
 > **Note:** the frontend's wallet/transaction layer is still being migrated to Sui (`@mysten/dapp-kit` + `@mysten/sui`). It consumes the backend's REST + Socket.io API for market state.
@@ -448,10 +448,10 @@ sui client call --package $PACKAGE_ID --module market --function create_market \
 
 | Object | Id |
 |--------|----|
-| Package | `0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549` |
-| Registry (shared) | `0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23` |
-| Market #0 (shared) | `0x77550db6ff83d512ca2763d8af9d6aaee13ba8364e5c83755d66d446a90ea0dc` |
-| TreasuryCap\<MOCK_USDC\> | `0x8029f5ce4f72340d8ac3dc1ae0aee28b749cdf763ea3ee06023ec2db95d7923d` |
+| Package | `0x024febde4e1e8e5d7a259ec836de90ebd596289e89a38c199cb7414f56f00200` |
+| Registry (shared) | `0x3c585041337389132541ecee0c2d1425ad539e147d18ba1d34f768dd4f1c8cab` |
+| Market #0 (shared) | `0x7c17c24831ea92ec91389e61f5399c3005d9a1c511ceb76329e0a6b3825d7a09` |
+| TreasuryCap\<MOCK_USDC\> | `0xbffb37f5be5ff8081cd7d8024444618b8ae32014ad9f957761337d037b504620` |
 | Collateral type | `0x76ab32...::mock_usdc::MOCK_USDC` |
 
 ---

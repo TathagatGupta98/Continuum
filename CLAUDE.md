@@ -12,11 +12,19 @@
 > the backend and frontend are both wired to it. See `packages/frontend/CLAUDE.md` for the
 > frontend architecture reference.
 >
-> **Live testnet deployment (Sui):**
-> - `PACKAGE_ID` = `0x76ab321b6eebc96d730897da0360a650f9b0449128b3961014b20064c7ef7549`
-> - `REGISTRY_ID` (shared) = `0xbc9655167e9a4b605dac143bf6153f9532e5dd2ebf70eecf51613c1e13138b23`
-> - `Market #0` (shared) = `0x77550db6ff83d512ca2763d8af9d6aaee13ba8364e5c83755d66d446a90ea0dc`
-> - `TreasuryCap<MOCK_USDC>` (owned) = `0x8029f5ce4f72340d8ac3dc1ae0aee28b749cdf763ea3ee06023ec2db95d7923d`
+> **Live testnet deployment (Sui) — republished 2026-06-21** (this build adds the
+> `position_market` module — Kiosk-based **tradeable positions** — so the package was
+> redeployed; all ids below are the new instance, the pre-2026-06-21 ids are obsolete):
+> - `PACKAGE_ID` = `0x024febde4e1e8e5d7a259ec836de90ebd596289e89a38c199cb7414f56f00200`
+> - `REGISTRY_ID` (shared) = `0x3c585041337389132541ecee0c2d1425ad539e147d18ba1d34f768dd4f1c8cab`
+> - `Market #0` (shared) = `0x7c17c24831ea92ec91389e61f5399c3005d9a1c511ceb76329e0a6b3825d7a09`
+> - `TransferPolicy<Position>` (shared) = `0x80771b4652ad8cec31c94fc0237422890900227e18f69579400d28d5aeba8b74`
+>   — created at publish by `position_market::init`, carries the market-open rule; required to
+>   confirm a Kiosk purchase of a `Position`. Its `TransferPolicyCap` (owned by the deployer) =
+>   `0x8e71a59e418b3c24c863aac1f98c253e44351208e11ff8555e53c03c0b7f54f8`.
+> - `Publisher` (owned) = `0xed0c55a64ca5cc2fa319e4cad990a6b4a5d1e4346768a2408383f970e36350bf`;
+>   `UpgradeCap` (owned) = `0xa75a5b2ba40f225597037916aaff01d98af790b53d1d19a32e89960cc9a976c4`.
+> - `TreasuryCap<MOCK_USDC>` (owned) = `0xbffb37f5be5ff8081cd7d8024444618b8ae32014ad9f957761337d037b504620`
 > - `COLLATERAL_TYPE` (default for new markets, updated 2026-06-21) =
 >   `0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC` — Circle's
 >   official testnet USDC (6 decimals, same as `MOCK_USDC`). Anyone can fund it via
@@ -111,6 +119,7 @@ Continuum/
 │   │   │   ├── fixed_point.move   # Signed WAD (1e18) fixed-point `Fp` over u256
 │   │   │   ├── gaussian.move      # PDF / CDF / erf / exp / sqrt (port of math_core.rs)
 │   │   │   ├── market.move        # Registry, Market<T>, Position, LP, trading, settlement
+│   │   │   ├── position_market.move # Kiosk + TransferPolicy<Position> — tradeable positions
 │   │   │   └── mock_usdc.move     # 6-decimal test collateral coin + faucet
 │   │   ├── tests/
 │   │   │   └── continuum_tests.move  # Unit (math) + full market-lifecycle tests
@@ -144,7 +153,7 @@ delegatecalls, so the four Stylus contracts collapse into **one Move package**:
 
 | Stylus (EVM)                                                       | Sui Move                                            |
 | ----------------------------------------------------------------- | --------------------------------------------------- |
-| `DistributionAmm` + `BinaryRouter` + `LpToken` + `OmniCurveFactory` | one `continuum::market` module                    |
+| `DistributionAmm` + `BinaryRouter` + `LpToken` + `ContinuumFactory` | one `continuum::market` module                    |
 | EIP-1167 minimal-proxy clones per market                          | each market is a shared `Market<T>` object          |
 | ERC-1155 positions                                                | owned `Position` objects (native transfer)          |
 | ERC-20 LP token (non-transferable)                                | per-address `LpAccount` rows in a `Table`           |
@@ -545,13 +554,13 @@ cd packages/contracts && sui move test
 cd packages/contracts && sui client publish --gas-budget 200000000
 
 # Backend (Sui — live)
-pnpm --filter @omnicurve/backend start             # db:push → db:seed → start:api (port 3001)
-pnpm --filter @omnicurve/backend start:api         # Express server only (port 3001)
-pnpm --filter @omnicurve/backend db:seed           # Seed DB (discovers markets from chain)
+pnpm --filter @continuum/backend start             # db:push → db:seed → start:api (port 3001)
+pnpm --filter @continuum/backend start:api         # Express server only (port 3001)
+pnpm --filter @continuum/backend db:seed           # Seed DB (discovers markets from chain)
 
 # Frontend (Sui — @mysten/dapp-kit + @mysten/sui)
-pnpm --filter @omnicurve/frontend dev              # Vite dev server (port 5173)
-pnpm --filter @omnicurve/frontend build            # tsc + vite build
+pnpm --filter @continuum/frontend dev              # Vite dev server (port 5173)
+pnpm --filter @continuum/frontend build            # tsc + vite build
 ```
 
 ---
