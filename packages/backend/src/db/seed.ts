@@ -18,19 +18,15 @@
  * Trade positions are reconstructed separately by `pnpm db:backfill` (run right
  * after this in the `start` flow), which replays on-chain `TradeExecuted` logs.
  *
- * Curated titles below override the on-chain title for known market ids; the
- * frontend's PATCH /metadata route can also set them at runtime.
+ * Titles always come from the on-chain `MarketCreated` event — the frontend's
+ * PATCH /metadata route can still relabel a market's category at runtime, but
+ * the title shown is always the on-chain one.
  */
 
 import { SuiClient } from '@mysten/sui/client';
 import { config } from '../config';
 import prisma from '../models/db';
 import { getMarketState, getSigmaMin, getCollateralType } from '../services/chainService';
-
-const MARKET_TITLES: Record<string, { title: string; category: string }> = {
-  '0': { title: 'What will the price of BTC be by the end of 2026?', category: 'crypto' },
-  '1': { title: 'What will the price of ETH be by the end of 2026?', category: 'crypto' },
-};
 
 async function seed() {
   console.log('🌱 Starting database seed (Sui)...\n');
@@ -101,18 +97,16 @@ async function seed() {
     console.log(`  μ: ${currentMu}  σ: ${currentSigma}  σ_min: ${minVarianceBound}`);
     console.log(`  Liquidity: ${totalLiquidity}  Resolved: ${isResolved}`);
 
-    const curated = MARKET_TITLES[marketId];
     const market = await prisma.market.upsert({
       where: { marketId },
       update: {
         currentMu, currentSigma, totalLiquidity, minVarianceBound,
         objectId, collateralType, isResolved, finalPrice,
-        ...(curated ? { title: curated.title, category: curated.category } : {}),
       },
       create: {
         marketId,
-        title: curated?.title ?? title ?? `Market #${marketId}`,
-        category: curated?.category ?? 'general',
+        title: title || `Market #${marketId}`,
+        category: 'general',
         currentMu, currentSigma, totalLiquidity, minVarianceBound,
         objectId, collateralType, isResolved, finalPrice,
       },
