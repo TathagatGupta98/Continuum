@@ -1136,7 +1136,7 @@ function OracleScroll() {
           style={{ background: 'rgba(253,248,238,0.94)', boxShadow: '0 6px 20px rgba(62,44,30,0.10)' }}
         >
           <p className="font-mono text-[10px] tracking-[0.3em] uppercase text-[rgba(35,24,18,0.60)]">
-            Planned · AI oracle
+            Multi-agent · AI oracle
           </p>
           <motion.p className="font-mono text-xs tracking-[0.2em] uppercase text-[#C8102E] mt-1.5">
             {phaseText}
@@ -1156,9 +1156,9 @@ function OracleScroll() {
           t={t} win={[0.02, 0.05, 0.12, 0.15]} num="A / 06" title="Why not one model"
           foot="“Single AI models are prone to hallucinations, sycophancy, and systematic biases that undermine oracle reliability.”"
         >
-          Resolution is the last manual step in Continuum — today the owner types the final
-          price by hand. The fix isn't a single price feed or a single LLM; it's a panel of
-          diverse models, because a lone oracle fails in correlated, invisible ways.
+          Price markets settle on Pyth — but news, sports, and elections have no feed. The answer
+          isn't a single source or a single LLM; it's a panel of diverse models, because a lone
+          oracle fails in correlated, invisible ways.
         </Caption>
         <Caption t={t} win={[0.17, 0.2, 0.29, 0.32]} num="B / 06" title="Evidence, gathered">
           The market's question and resolution criteria become one normalized prompt. Each
@@ -1223,6 +1223,614 @@ const ORACLE_TENETS = [
     note: 'Below τ the oracle stays silent and the 24h dispute window keeps control.',
   },
 ]
+
+/* ════════════════════════════════════════════════════════════════════════
+   11 — Pyth: trustless on-chain settlement for price markets
+   A pinned scroll story. A live BTC/USD tape freezes at the market's close,
+   then flows Hermes → Wormhole VAA → resolve_with_pyth into one on-chain
+   final_price. Numbers are the verified testnet run (final_price ≈
+   $63,779.06, feed 0xf9c0…ea31b, MAX_PRICE_AGE_SECS = 60).
+   ════════════════════════════════════════════════════════════════════════ */
+
+const PY_GATE_X = 720
+const PY_TAPE_Y = 150
+const PY_TAPE_FROM = 90
+const PY_TAPE_TO = 910
+
+const pythTapeY = (x: number) =>
+  PY_TAPE_Y - 30 * Math.sin((x - PY_TAPE_FROM) / 58) - 13 * Math.sin((x - PY_TAPE_FROM) / 17)
+
+const PYTH_TAPE_D = (() => {
+  let d = ''
+  for (let i = 0; i <= 160; i++) {
+    const x = PY_TAPE_FROM + ((PY_TAPE_TO - PY_TAPE_FROM) * i) / 160
+    d += `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${pythTapeY(x).toFixed(1)}`
+  }
+  return d
+})()
+
+const PYTH_STEPS = [
+  { x: 215, top: 'Hermes · beta', bot: 'pull update' },
+  { x: 405, top: 'Wormhole VAA', bot: 'guardians ✓' },
+  { x: 595, top: 'feed id ✓', bot: 'age ≤ 60s' },
+  { x: 785, top: 'price·10^expo', bot: '→ signed WAD' },
+]
+const PY_STEP_Y = 372
+const PY_STEP_W = 152
+const PY_STEP_H = 60
+
+function PythStep({ t, step, i }: {
+  t: MotionValue<number>
+  step: (typeof PYTH_STEPS)[number]
+  i: number
+}) {
+  const inS = 0.42 + i * 0.085
+  const opacity = useTransform(t, [inS, inS + 0.05], [0.16, 1])
+  const y = useTransform(t, [inS, inS + 0.06], [12, 0])
+  const left = step.x - PY_STEP_W / 2
+  const top = PY_STEP_Y - PY_STEP_H / 2
+
+  return (
+    <motion.g style={{ opacity, y }}>
+      <rect
+        x={left} y={top} width={PY_STEP_W} height={PY_STEP_H} rx={4}
+        fill="var(--bg-surface)" stroke="rgba(14,116,144,0.5)" strokeWidth={1}
+      />
+      <text
+        x={step.x} y={top + 25} textAnchor="middle"
+        fontSize={12} fontFamily="'JetBrains Mono', monospace" fill="var(--text-primary)"
+      >
+        {step.top}
+      </text>
+      <text
+        x={step.x} y={top + 44} textAnchor="middle"
+        fontSize={11} fontFamily="'JetBrains Mono', monospace" fill="#0E7490"
+      >
+        {step.bot}
+      </text>
+    </motion.g>
+  )
+}
+
+function PythScroll() {
+  const ref = useRef<HTMLDivElement>(null)
+  const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end end'] })
+  const t = useSpring(scrollYProgress, { stiffness: 110, damping: 28, restDelta: 0.0001 })
+
+  // the tape draws itself in, a scrubber rides it, then freezes at the close gate
+  const tapeLen = useTransform(t, [0.04, 0.26], [0, 1])
+  const scrubX = useTransform(t, [0.08, 0.3, 1], [PY_TAPE_FROM, PY_GATE_X, PY_GATE_X])
+  const scrubY = useTransform(scrubX, (x) => pythTapeY(x))
+  const priceLabelY = useTransform(scrubY, (v) => v - 16)
+  const scrubO = useTransform(t, [0.06, 0.12], [0, 1])
+  const priceText = useTransform(scrubX, (x) =>
+    `$${Math.round(63600 + (PY_TAPE_Y - pythTapeY(x)) * 7).toLocaleString()}`,
+  )
+  const liveO = useTransform(t, [0.06, 0.12, 0.3, 0.36], [0, 1, 1, 0])
+
+  // gate (resolves_at) + frozen snapshot
+  const gateO = useTransform(t, [0.22, 0.3], [0, 1])
+  const snapO = useTransform(t, [0.3, 0.36], [0, 1])
+  const snapText = useTransform(t, [0.3, 0.36], [0, 1])
+
+  // verification chain guide + drop from snapshot
+  const dropLen = useTransform(t, [0.36, 0.44], [0, 1])
+  const chainLen = useTransform(t, [0.44, 0.8], [0, 1])
+
+  // settled output
+  const outO = useTransform(t, [0.82, 0.88], [0, 1])
+  const outY = useTransform(t, [0.82, 0.88], [14, 0])
+
+  const phaseText = useTransform(t, (v): string => {
+    if (v < 0.18) return 'A — A BOUND PRICE FEED'
+    if (v < 0.34) return 'B — THE MARKET CLOSES'
+    if (v < 0.58) return 'C — PULL A FRESH PRICE'
+    if (v < 0.8) return 'D — VERIFY ON-CHAIN'
+    return 'E — ONE FINAL PRICE'
+  })
+
+  return (
+    <div ref={ref} className="relative h-[520vh]">
+      <div className="sticky top-14 h-[calc(100vh-3.5rem)] overflow-hidden flex items-start justify-center lg:justify-end px-1 lg:pr-12">
+        <svg
+          viewBox={`0 0 ${VB_W} ${VB_H}`}
+          preserveAspectRatio="xMidYMid meet"
+          className="w-full max-w-6xl h-[82%] mt-4 px-2"
+        >
+          {/* feed label */}
+          <text
+            x={PY_TAPE_FROM} y={70}
+            fontSize={11} fontFamily="'JetBrains Mono', monospace" fill="var(--text-subtle)"
+          >
+            Pyth · BTC/USD · 0xf9c0…ea31b
+          </text>
+          <motion.circle cx={PY_TAPE_FROM + 232} cy={66} r={4} fill="#0E7490" style={{ opacity: liveO }} />
+          <motion.text
+            x={PY_TAPE_FROM + 242} y={70}
+            style={{ opacity: liveO }}
+            fontSize={11} fontFamily="'JetBrains Mono', monospace" fill="#0E7490"
+          >
+            LIVE
+          </motion.text>
+
+          {/* the live price tape */}
+          <motion.path
+            d={PYTH_TAPE_D}
+            style={{ pathLength: tapeLen }}
+            fill="none" stroke="#0E7490" strokeWidth={2}
+          />
+
+          {/* scrubber + travelling price readout */}
+          <motion.circle cx={scrubX} cy={scrubY} r={5} fill="#0E7490" style={{ opacity: scrubO }} />
+          <motion.text
+            x={scrubX} y={priceLabelY} textAnchor="middle"
+            style={{ opacity: liveO }}
+            fontSize={12} fontFamily="'JetBrains Mono', monospace" fill="#0E7490"
+          >
+            {priceText}
+          </motion.text>
+
+          {/* resolves_at gate */}
+          <motion.g style={{ opacity: gateO }}>
+            <line
+              x1={PY_GATE_X} x2={PY_GATE_X} y1={92} y2={300}
+              stroke="#C8102E" strokeWidth={1.5} strokeDasharray="4 3"
+            />
+            <text
+              x={PY_GATE_X} dx={8} y={106}
+              fontSize={11} fontFamily="'JetBrains Mono', monospace" fill="#C8102E"
+            >
+              resolves_at — market closes
+            </text>
+          </motion.g>
+
+          {/* frozen snapshot */}
+          <motion.circle
+            cx={PY_GATE_X} cy={pythTapeY(PY_GATE_X)} r={7}
+            style={{ opacity: snapO }}
+            fill="none" stroke="#0E7490" strokeWidth={2}
+          />
+          <motion.text
+            x={PY_GATE_X} dx={12} y={pythTapeY(PY_GATE_X) - 4}
+            style={{ opacity: snapText }}
+            fontSize={12} fontFamily="'JetBrains Mono', monospace" fill="#0E7490"
+          >
+            snapshot
+          </motion.text>
+
+          {/* drop from snapshot into the verification chain */}
+          <motion.line
+            x1={PY_GATE_X} x2={215} y1={pythTapeY(PY_GATE_X) + 8} y2={PY_STEP_Y - PY_STEP_H / 2 - 6}
+            style={{ pathLength: dropLen }}
+            stroke="rgba(14,116,144,0.4)" strokeWidth={1} strokeDasharray="3 4"
+          />
+          {/* chain guide behind the steps */}
+          <motion.line
+            x1={215} x2={785} y1={PY_STEP_Y} y2={PY_STEP_Y}
+            style={{ pathLength: chainLen }}
+            stroke="rgba(14,116,144,0.35)" strokeWidth={1}
+          />
+
+          {PYTH_STEPS.map((s, i) => (
+            <PythStep key={s.x} t={t} step={s} i={i} />
+          ))}
+
+          {/* arrow down to the settled output */}
+          <motion.line
+            x1={785} x2={500} y1={PY_STEP_Y + PY_STEP_H / 2 + 4} y2={476}
+            style={{ opacity: outO }}
+            stroke="rgba(14,116,144,0.4)" strokeWidth={1}
+          />
+
+          {/* settled output */}
+          <motion.g style={{ opacity: outO, y: outY }}>
+            <rect
+              x={500 - 150} y={478} width={300} height={56} rx={4}
+              fill="var(--bg-surface)" stroke="rgba(14,116,144,0.6)" strokeWidth={1.5}
+            />
+            <text
+              x={500} y={500} textAnchor="middle"
+              fontSize={10} fontFamily="'JetBrains Mono', monospace" fill="#0E7490"
+            >
+              market::resolve_with_pyth — permissionless
+            </text>
+            <text
+              x={500} y={522} textAnchor="middle"
+              fontSize={14} fontFamily="'JetBrains Mono', monospace" fill="var(--text-primary)"
+            >
+              final_price ≈ $63,779.06
+            </text>
+          </motion.g>
+        </svg>
+
+        {/* phase indicator */}
+        <div
+          className="absolute top-5 left-4 sm:left-10 pointer-events-none rounded px-3.5 py-2.5 border border-[rgba(62,44,30,0.16)]"
+          style={{ background: 'rgba(253,248,238,0.94)', boxShadow: '0 6px 20px rgba(62,44,30,0.10)' }}
+        >
+          <p className="font-mono text-[10px] tracking-[0.3em] uppercase text-[rgba(35,24,18,0.60)]">
+            Live · Pyth on-chain
+          </p>
+          <motion.p className="font-mono text-xs tracking-[0.2em] uppercase text-[#0E7490] mt-1.5">
+            {phaseText}
+          </motion.p>
+        </div>
+
+        {/* scroll progress rail */}
+        <div className="absolute right-1.5 sm:right-3 top-[12%] bottom-[12%] w-px bg-[color:var(--border-dim)]">
+          <motion.div style={{ scaleY: t, transformOrigin: 'top' }} className="absolute inset-0 bg-[#0E7490]" />
+        </div>
+
+        {/* captions */}
+        <Caption t={t} win={[0.02, 0.05, 0.15, 0.18]} num="A / 05" title="Bound at birth">
+          Every price market is created with an immutable 32-byte Pyth feed id. BTC/USD here is
+          <span className="font-mono"> 0xf9c0…ea31b</span>. The settlement source is fixed before a
+          single bet lands — it can never be swapped under open positions.
+        </Caption>
+        <Caption t={t} win={[0.2, 0.23, 0.31, 0.34]} num="B / 05" title="Close, then anyone settles">
+          Nothing resolves before the market's scheduled <span className="font-mono">resolves_at</span>.
+          Once it passes the gate opens — and the call is permissionless. No owner, no trusted
+          submitter, no human in the loop.
+        </Caption>
+        <Caption t={t} win={[0.36, 0.39, 0.55, 0.58]} num="C / 05" title="Pyth is a pull oracle">
+          Prices don't sit on-chain waiting. The caller fetches a fresh signed price from the beta
+          Hermes endpoint and refreshes the feed on Sui in the <em>same</em> transaction — so the
+          on-chain read is never stale.
+        </Caption>
+        <Caption
+          t={t} win={[0.6, 0.63, 0.77, 0.8]} num="D / 05" title="Verified, not trusted"
+          foot="Asserts the feed id matches the bound one — BTC can't be settled against the ETH feed."
+        >
+          Wormhole guardians attest the update; <span className="font-mono">resolve_with_pyth</span>
+          {' '}checks the price is under 60 seconds old, then converts Pyth's signed
+          <span className="font-mono"> price · 10^expo</span> into the protocol's WAD final price.
+        </Caption>
+        <Caption
+          t={t} win={[0.82, 0.85, 0.96, 0.995]} num="E / 05" title="One number, on-chain"
+          foot="Verified live on Sui testnet — final_price ≈ $63,779.06, tx CBy9CYff…"
+        >
+          The final price is written and <span className="font-mono">MarketResolved</span> fires.
+          Per-position payout is unchanged: a YES at strike x pays $1 per token iff final ≥ x.
+          Fully trustless, end to end.
+        </Caption>
+      </div>
+    </div>
+  )
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   14 — Secondary market: tradeable Positions via Sui Kiosk
+   A pinned scroll story. A held Position is listed in the seller's Kiosk,
+   bought through the shared TransferPolicy<Position> (market-open rule), and
+   transfers natively to the buyer while SUI flows back.
+   ════════════════════════════════════════════════════════════════════════ */
+
+const KIO_LANE_Y = 266
+const KIO_SELLER_X = 135
+const KIO_KIOSK_X = 420
+const KIO_GATE_X = 640
+const KIO_BUYER_X = 865
+
+function KioskScroll() {
+  const ref = useRef<HTMLDivElement>(null)
+  const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end end'] })
+  const t = useSpring(scrollYProgress, { stiffness: 110, damping: 28, restDelta: 0.0001 })
+
+  const cardX = useTransform(t, [0.16, 0.28, 0.66, 0.78], [KIO_SELLER_X, KIO_KIOSK_X, KIO_KIOSK_X, KIO_BUYER_X])
+  const cardLeft = useTransform(cardX, (x) => x - 66)
+  const cardO = useTransform(t, [0.04, 0.1], [0, 1])
+
+  const kioskO = useTransform(t, [0.16, 0.24], [0, 1])
+  const tagO = useTransform(t, [0.2, 0.28, 0.66, 0.72], [0, 1, 1, 0])
+  const buyerO = useTransform(t, [0.32, 0.4], [0, 1])
+  const buyArrowO = useTransform(t, [0.34, 0.42, 0.62, 0.68], [0, 0.8, 0.8, 0])
+
+  const gateO = useTransform(t, [0.46, 0.54], [0, 1])
+  const stampO = useTransform(t, [0.5, 0.58], [0, 1])
+  const stampScale = useTransform(t, [0.5, 0.58, 0.64], [0.6, 1.12, 1])
+
+  const suiX = useTransform(t, [0.66, 0.82], [KIO_BUYER_X - 45, KIO_SELLER_X + 45])
+  const suiO = useTransform(t, [0.66, 0.7, 0.82, 0.86], [0, 1, 1, 0])
+  const soldO = useTransform(t, [0.78, 0.84], [0, 1])
+  const recapO = useTransform(t, [0.85, 0.91], [0, 1])
+  const recapY = useTransform(t, [0.85, 0.91], [12, 0])
+
+  const phaseText = useTransform(t, (v): string => {
+    if (v < 0.16) return 'A — A LOCKED BET'
+    if (v < 0.32) return 'B — LIST IT IN A KIOSK'
+    if (v < 0.46) return 'C — A BUYER ARRIVES'
+    if (v < 0.64) return 'D — THE MARKET-OPEN RULE'
+    if (v < 0.84) return 'E — OWNERSHIP TRANSFERS'
+    return 'F — FROM BET TO INSTRUMENT'
+  })
+
+  return (
+    <div ref={ref} className="relative h-[540vh]">
+      <div className="sticky top-14 h-[calc(100vh-3.5rem)] overflow-hidden flex items-start justify-center lg:justify-end px-1 lg:pr-12">
+        <svg
+          viewBox={`0 0 ${VB_W} ${VB_H}`}
+          preserveAspectRatio="xMidYMid meet"
+          className="w-full max-w-6xl h-[82%] mt-4 px-2"
+        >
+          {/* seller wallet */}
+          <g>
+            <rect
+              x={KIO_SELLER_X - 65} y={KIO_LANE_Y - 33} width={130} height={66} rx={4}
+              fill="var(--bg-surface)" stroke="rgba(62,44,30,0.30)" strokeWidth={1}
+            />
+            <text
+              x={KIO_SELLER_X} y={KIO_LANE_Y + 56} textAnchor="middle"
+              fontSize={11} fontFamily="'JetBrains Mono', monospace" fill="var(--text-subtle)"
+            >
+              SELLER
+            </text>
+          </g>
+
+          {/* buyer wallet */}
+          <motion.g style={{ opacity: buyerO }}>
+            <rect
+              x={KIO_BUYER_X - 65} y={KIO_LANE_Y - 33} width={130} height={66} rx={4}
+              fill="var(--bg-surface)" stroke="rgba(62,44,30,0.30)" strokeWidth={1}
+            />
+            <text
+              x={KIO_BUYER_X} y={KIO_LANE_Y + 56} textAnchor="middle"
+              fontSize={11} fontFamily="'JetBrains Mono', monospace" fill="var(--text-subtle)"
+            >
+              BUYER
+            </text>
+          </motion.g>
+
+          {/* kiosk display case */}
+          <motion.g style={{ opacity: kioskO }}>
+            <rect
+              x={KIO_KIOSK_X - 78} y={196} width={156} height={150} rx={5}
+              fill="none" stroke="rgba(200,16,46,0.4)" strokeWidth={1.5}
+            />
+            <text
+              x={KIO_KIOSK_X} y={336} textAnchor="middle"
+              fontSize={10} fontFamily="'JetBrains Mono', monospace" fill="#C8102E"
+            >
+              KIOSK
+            </text>
+            {/* price tag */}
+            <motion.g style={{ opacity: tagO }}>
+              <rect
+                x={KIO_KIOSK_X - 52} y={166} width={104} height={24} rx={3}
+                fill="rgba(200,16,46,0.10)" stroke="rgba(200,16,46,0.45)" strokeWidth={1}
+              />
+              <text
+                x={KIO_KIOSK_X} y={182} textAnchor="middle"
+                fontSize={11} fontFamily="'JetBrains Mono', monospace" fill="#C8102E"
+              >
+                ask 4.20 SUI
+              </text>
+            </motion.g>
+          </motion.g>
+
+          {/* TransferPolicy gate */}
+          <motion.g style={{ opacity: gateO }}>
+            <rect
+              x={KIO_GATE_X - 54} y={178} width={108} height={184} rx={4}
+              fill="rgba(11,122,82,0.06)" stroke="rgba(11,122,82,0.45)" strokeWidth={1}
+              strokeDasharray="4 3"
+            />
+            <text
+              x={KIO_GATE_X} y={384} textAnchor="middle"
+              fontSize={9.5} fontFamily="'JetBrains Mono', monospace" fill="var(--accent-yes)"
+            >
+              TransferPolicy
+            </text>
+            <text
+              x={KIO_GATE_X} y={398} textAnchor="middle"
+              fontSize={9.5} fontFamily="'JetBrains Mono', monospace" fill="var(--accent-yes)"
+            >
+              &lt;Position&gt;
+            </text>
+            {/* stamp */}
+            <motion.g style={{ opacity: stampO, scale: stampScale, transformBox: 'fill-box', transformOrigin: 'center' }}>
+              <circle cx={KIO_GATE_X} cy={210} r={24} fill="none" stroke="var(--accent-yes)" strokeWidth={2} />
+              <text
+                x={KIO_GATE_X} y={216} textAnchor="middle"
+                fontSize={20} fontFamily="'JetBrains Mono', monospace" fill="var(--accent-yes)"
+              >
+                ✓
+              </text>
+              <text
+                x={KIO_GATE_X} y={252} textAnchor="middle"
+                fontSize={10} fontFamily="'JetBrains Mono', monospace" fill="var(--accent-yes)"
+              >
+                market-open
+              </text>
+            </motion.g>
+          </motion.g>
+
+          {/* buyer → kiosk intent arrow */}
+          <motion.line
+            x1={KIO_BUYER_X - 60} x2={KIO_KIOSK_X + 84} y1={KIO_LANE_Y - 50} y2={KIO_LANE_Y - 50}
+            style={{ opacity: buyArrowO }}
+            stroke="rgba(62,44,30,0.4)" strokeWidth={1} strokeDasharray="3 4"
+          />
+
+          {/* the Position card — travels seller → kiosk → buyer */}
+          <motion.g style={{ x: cardLeft, opacity: cardO }}>
+            <rect
+              x={0} y={KIO_LANE_Y - 28} width={132} height={56} rx={4}
+              fill="var(--bg-surface)" stroke="var(--accent-yes)" strokeWidth={1.5}
+            />
+            <text
+              x={66} y={KIO_LANE_Y - 6} textAnchor="middle"
+              fontSize={12} fontFamily="'JetBrains Mono', monospace" fill="var(--accent-yes)"
+            >
+              YES @ $3,000
+            </text>
+            <text
+              x={66} y={KIO_LANE_Y + 14} textAnchor="middle"
+              fontSize={10} fontFamily="'JetBrains Mono', monospace" fill="var(--text-subtle)"
+            >
+              Position · 8.4 tok
+            </text>
+          </motion.g>
+
+          {/* SUI flowing buyer → seller */}
+          <motion.g style={{ x: suiX, opacity: suiO }}>
+            <circle cx={0} cy={KIO_LANE_Y + 96} r={15} fill="rgba(14,116,144,0.12)" stroke="#0E7490" strokeWidth={1.5} />
+            <text x={0} y={KIO_LANE_Y + 100} textAnchor="middle" fontSize={11} fontFamily="'JetBrains Mono', monospace" fill="#0E7490">◎</text>
+            <text x={0} y={KIO_LANE_Y + 124} textAnchor="middle" fontSize={10} fontFamily="'JetBrains Mono', monospace" fill="#0E7490">4.20 SUI</text>
+          </motion.g>
+
+          {/* sold confirmation */}
+          <motion.text
+            x={KIO_BUYER_X} y={KIO_LANE_Y - 50} textAnchor="middle"
+            style={{ opacity: soldO }}
+            fontSize={11} fontFamily="'JetBrains Mono', monospace" fill="var(--accent-yes)"
+          >
+            owned by buyer ✓
+          </motion.text>
+
+          {/* recap — the rule, stated */}
+          <motion.g style={{ opacity: recapO, y: recapY }}>
+            <text
+              x={VB_W / 2} y={508} textAnchor="middle"
+              fontSize={12} fontFamily="'JetBrains Mono', monospace" fill="var(--accent-yes)"
+            >
+              market open → tradeable ✓
+            </text>
+            <text
+              x={VB_W / 2} y={530} textAnchor="middle"
+              fontSize={12} fontFamily="'JetBrains Mono', monospace" fill="var(--accent-no)"
+            >
+              market resolved → listing blocked ✗
+            </text>
+          </motion.g>
+        </svg>
+
+        {/* phase indicator */}
+        <div
+          className="absolute top-5 left-4 sm:left-10 pointer-events-none rounded px-3.5 py-2.5 border border-[rgba(62,44,30,0.16)]"
+          style={{ background: 'rgba(253,248,238,0.94)', boxShadow: '0 6px 20px rgba(62,44,30,0.10)' }}
+        >
+          <p className="font-mono text-[10px] tracking-[0.3em] uppercase text-[rgba(35,24,18,0.60)]">
+            Live · Secondary market
+          </p>
+          <motion.p className="font-mono text-xs tracking-[0.2em] uppercase text-[#C8102E] mt-1.5">
+            {phaseText}
+          </motion.p>
+        </div>
+
+        {/* scroll progress rail */}
+        <div className="absolute right-1.5 sm:right-3 top-[12%] bottom-[12%] w-px bg-[color:var(--border-dim)]">
+          <motion.div style={{ scaleY: t, transformOrigin: 'top' }} className="absolute inset-0 bg-[#C8102E]" />
+        </div>
+
+        {/* captions */}
+        <Caption t={t} win={[0.02, 0.05, 0.14, 0.17]} num="A / 06" title="Stuck until settlement?">
+          A Position is an owned object — a YES bet at $3,000. The curve only prices <em>new</em> bets;
+          there's no "sell back to the AMM." Without a secondary market you'd be locked in until the
+          market closes.
+        </Caption>
+        <Caption t={t} win={[0.18, 0.21, 0.3, 0.33]} num="B / 06" title="List it in a Kiosk">
+          Place the Position in your Sui Kiosk and list it with an ask in SUI. Kiosk is a native Sui
+          primitive — a self-custodied on-chain display case — so listing needs no bespoke marketplace
+          contract at all.
+        </Caption>
+        <Caption t={t} win={[0.34, 0.37, 0.44, 0.47]} num="C / 06" title="Anyone can buy">
+          The listing is discoverable across every market. A buyer pays the ask directly, pricing a
+          specific strike-and-side — a number that can diverge from the curve's current price.
+        </Caption>
+        <Caption
+          t={t} win={[0.5, 0.53, 0.62, 0.65]} num="D / 06" title="Guarded by policy"
+          foot="TransferPolicy<Position> — shared at publish, carrying the market-open rule."
+        >
+          A purchase isn't final until the shared <span className="font-mono">TransferPolicy&lt;Position&gt;</span>
+          {' '}confirms it. Its market-open rule means a Position can only change hands while its market is
+          still live.
+        </Caption>
+        <Caption t={t} win={[0.66, 0.69, 0.78, 0.81]} num="E / 06" title="Native settlement">
+          The Position transfers to the buyer and SUI flows to the seller — atomically, as owned objects
+          move natively. No escrow, no wrapper token, no approval.
+        </Caption>
+        <Caption
+          t={t} win={[0.84, 0.87, 0.96, 0.995]} num="F / 06" title="From bet to instrument"
+          foot="A resolved market's positions can no longer be listed — the policy blocks it."
+        >
+          Positions become liquid: exit early, take profit before close, or post limit-order-like asks on
+          a single outcome. Continuum gains an order-book layer the curve never had to grow itself.
+        </Caption>
+      </div>
+    </div>
+  )
+}
+
+/* ── 15 — Sui: the fast, modular substrate the whole protocol leans on ───── */
+
+const SUI_FEATURES = [
+  {
+    label: 'Object-centric · parallel',
+    body: 'Markets are shared objects; Positions are owned objects. Independent markets touch disjoint state, so Sui executes their transactions in parallel — no global mempool bottleneck.',
+  },
+  {
+    label: 'Move 2024 · generics',
+    body: 'Market<phantom T> is generic over the collateral coin. Real testnet USDC drops in with zero token wiring — and there is no ERC-20-style approval step.',
+  },
+  {
+    label: 'Kiosk · TransferPolicy',
+    body: 'The entire secondary market is a first-class Sui primitive, not a custom contract — on-chain listing, programmable transfer rules, and safe native transfer come built in.',
+  },
+  {
+    label: 'Sub-second · low fee',
+    body: 'Cheap, fast finality makes it affordable to run the full Gaussian engine — erf, exp, sqrt in WAD fixed-point — entirely on-chain, on every single trade.',
+  },
+  {
+    label: 'Clock · on-chain time',
+    body: 'The shared 0x6 Clock gates resolves_at and the 24-hour resolution timelock natively — verifiable on-chain time without trusting an external scheduler.',
+  },
+  {
+    label: 'PTBs · atomic flows',
+    body: 'Programmable Transaction Blocks chain steps into one signature: refresh a Pyth feed and resolve in a single tx; accept ownership, seed μ/σ, and add liquidity in another.',
+  },
+]
+
+function SuiHead() {
+  const ref = useRef<HTMLDivElement>(null)
+  const { scrollYProgress } = useScroll({ target: ref, offset: ['start end', 'end start'] })
+  const shapeY = useTransform(scrollYProgress, [0, 1], [-40, 60])
+  const shapeX = useTransform(scrollYProgress, [0, 1], [-30, 30])
+
+  return (
+    <div ref={ref} className="relative mb-14 py-6">
+      <motion.div
+        aria-hidden
+        style={{ y: shapeY, x: shapeX }}
+        className="absolute left-[1%] top-[6%] w-[40%] h-[74%] bg-[#0E7490] opacity-90 skew-x-[14deg] pointer-events-none"
+      />
+      <div className="relative">
+        <Reveal>
+          <p className="font-mono text-[10px] tracking-[0.3em] uppercase text-[#0E7490] mb-4">
+            15 / Built on Sui
+          </p>
+        </Reveal>
+        <h2
+          className="font-display font-800 tracking-tight leading-[1.02] text-[color:var(--text-primary)]"
+          style={{ fontSize: 'clamp(2.4rem, 6vw, 4.6rem)' }}
+        >
+          <MaskLines
+            lines={[
+              'Fast where it',
+              <span key="l2" className="text-[#0E7490]">counts. Modular</span>,
+              'where it matters.',
+            ]}
+          />
+        </h2>
+        <Reveal delay={0.2}>
+          <p className="font-serif italic text-base mt-5 max-w-xl text-[color:var(--text-muted)]">
+            Continuum isn't bolted onto Sui — it's composed from Sui's primitives. Each one removed a
+            whole layer we'd have had to build by hand on an EVM chain.
+          </p>
+        </Reveal>
+      </div>
+    </div>
+  )
+}
 
 export default function Docs() {
   return (
@@ -1340,15 +1948,81 @@ export default function Docs() {
         <SectionHead
           num="10 / Resolution"
           title="Settling against reality"
-          sub="Pull-based claiming, with a timelock between proposal and finality."
+          sub="The manual baseline: pull-based claiming, with a timelock between proposal and finality. Two automated paths build on it — Pyth for price markets, an AI oracle for everything else."
         />
         <LifecycleFan />
       </section>
 
-      {/* ── 11 / ARCHITECTURE ── */}
+      {/* ── 11 / PYTH — trustless on-chain settlement ── */}
+      <section className="max-w-4xl mx-auto px-4 sm:px-6 pt-28 pb-4">
+        <SectionHead
+          num="11 / On-chain settlement"
+          title="Price markets settle trustlessly via Pyth"
+          sub="A market bound to a Pyth feed needs no owner to resolve it. After it closes, anyone can read the feed on-chain — guarded by Wormhole, fresh to the second — and write the final price. Verified live on Sui testnet. Scroll the pipeline."
+        />
+      </section>
+      <PythScroll />
+
+      {/* ── 12 / AI ORACLE — multi-agent resolution for real-world events ── */}
+      <section className="max-w-4xl mx-auto px-4 sm:px-6 pt-28 pb-4">
+        <SectionHead
+          num="12 / AI oracle"
+          title="Real-world events, resolved by a panel"
+          sub="News, sports, elections — outcomes with no price feed. Continuum runs a multi-agent LLM oracle that gathers evidence, votes with calibrated weights, and knows when to abstain to the timelock — after Kota, arXiv:2605.30802. Scroll the pipeline."
+        />
+      </section>
+      <OracleScroll />
+
+      {/* ── 12½ / FROM THE PAPER ── */}
       <section className="max-w-4xl mx-auto px-4 sm:px-6 pt-28 pb-8">
         <SectionHead
-          num="11 / Architecture"
+          num="12½ / From the paper"
+          title="Why a panel, not a feed"
+          sub="The design principles behind the AI oracle — each a one-line claim from the paper, mapped to what it buys Continuum."
+        />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {ORACLE_TENETS.map((tn, i) => (
+            <Reveal key={tn.label} delay={i * 0.08}>
+              <div
+                className="border border-[color:var(--border-dim)] rounded p-5 h-full"
+                style={{ background: 'var(--bg-surface)' }}
+              >
+                <p className="font-mono text-[10px] tracking-[0.25em] uppercase text-[#C8102E] mb-3">
+                  {tn.label}
+                </p>
+                <p className="font-serif italic text-[15px] leading-relaxed text-[color:var(--text-primary)]">
+                  {tn.quote}
+                </p>
+                <p className="font-serif text-sm leading-relaxed mt-3 text-[color:var(--text-muted)]">
+                  {tn.note}
+                </p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+        <Reveal delay={0.2}>
+          <p className="font-mono text-[11px] mt-8 text-[color:var(--text-subtle)]">
+            Source —{' '}
+            <a
+              href="https://arxiv.org/pdf/2605.30802"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[#C8102E] hover:underline"
+            >
+              Kota, “Design and Evaluation of Multi-Agent AI Oracle Systems for Prediction
+              Market Resolution” (arXiv:2605.30802)
+            </a>
+            . Resolution math (Section 1.4) is unchanged — the oracle only ever supplies a
+            single <span className="text-[color:var(--text-primary)]">final_price</span>, or
+            abstains.
+          </p>
+        </Reveal>
+      </section>
+
+      {/* ── 13 / ARCHITECTURE ── */}
+      <section className="max-w-4xl mx-auto px-4 sm:px-6 pt-28 pb-8">
+        <SectionHead
+          num="13 / Architecture"
           title="One Move package, a shared object per market"
           sub="The whole protocol is a single Sui Move package. No proxies, no clones — every market is a shared on-chain object, and the Gaussian engine runs natively for near-zero gas."
         />
@@ -1402,59 +2076,46 @@ export default function Docs() {
         </Reveal>
       </section>
 
-      {/* ── 12 / FUTURE — multi-agent AI oracle ── */}
+      {/* ── 14 / SECONDARY MARKET — Kiosk ── */}
       <section className="max-w-4xl mx-auto px-4 sm:px-6 pt-28 pb-4">
         <SectionHead
-          num="12 / The road ahead"
-          title="An AI oracle for resolution"
-          sub="Today the owner sets the final price by hand. Next: a multi-agent AI oracle that debates, votes with calibrated weights, and knows when to abstain — after Kota, arXiv:2605.30802. Scroll the pipeline."
+          num="14 / Secondary market"
+          title="Positions are tradeable, via Sui Kiosk"
+          sub="A bet doesn't have to be held to settlement. Continuum lists Position objects on Sui's native Kiosk, gated by a shared TransferPolicy — so a YES at $3,000 can change hands while the market is still open. Scroll the trade."
         />
       </section>
-      <OracleScroll />
+      <KioskScroll />
 
-      {/* ── 12½ / FROM THE PAPER ── */}
-      <section className="max-w-4xl mx-auto px-4 sm:px-6 pt-28 pb-8">
-        <SectionHead
-          num="12½ / From the paper"
-          title="Why a panel, not a feed"
-          sub="The design principles behind the planned oracle — each a one-line claim from the paper, mapped to what it buys Continuum."
-        />
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {ORACLE_TENETS.map((tn, i) => (
-            <Reveal key={tn.label} delay={i * 0.08}>
+      {/* ── 15 / BUILT ON SUI ── */}
+      <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-28 pb-8">
+        <SuiHead />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {SUI_FEATURES.map((f, i) => (
+            <Reveal key={f.label} delay={(i % 3) * 0.08}>
               <div
                 className="border border-[color:var(--border-dim)] rounded p-5 h-full"
                 style={{ background: 'var(--bg-surface)' }}
               >
-                <p className="font-mono text-[10px] tracking-[0.25em] uppercase text-[#C8102E] mb-3">
-                  {tn.label}
+                <p className="font-mono text-[10px] tracking-[0.22em] uppercase text-[#0E7490] mb-3">
+                  {f.label}
                 </p>
-                <p className="font-serif italic text-[15px] leading-relaxed text-[color:var(--text-primary)]">
-                  {tn.quote}
-                </p>
-                <p className="font-serif text-sm leading-relaxed mt-3 text-[color:var(--text-muted)]">
-                  {tn.note}
+                <p className="font-serif text-sm leading-relaxed text-[color:var(--text-muted)]">
+                  {f.body}
                 </p>
               </div>
             </Reveal>
           ))}
         </div>
-        <Reveal delay={0.2}>
-          <p className="font-mono text-[11px] mt-8 text-[color:var(--text-subtle)]">
-            Source —{' '}
-            <a
-              href="https://arxiv.org/pdf/2605.30802"
-              target="_blank"
-              rel="noreferrer"
-              className="text-[#C8102E] hover:underline"
-            >
-              Kota, “Design and Evaluation of Multi-Agent AI Oracle Systems for Prediction
-              Market Resolution” (arXiv:2605.30802)
-            </a>
-            . Resolution math (Section 1.4) is unchanged — the oracle only ever supplies a
-            single <span className="text-[color:var(--text-primary)]">final_price</span>, or
-            abstains.
-          </p>
+        <Reveal delay={0.16}>
+          <div
+            className="border border-[color:var(--border-dim)] rounded p-5 mt-4 font-mono text-xs leading-loose text-[color:var(--text-muted)] overflow-x-auto"
+            style={{ background: 'var(--bg-surface)' }}
+          >
+            <p className="text-[#0E7490]">// one signature, all-or-nothing — the modular payoff</p>
+            <p className="mt-1.5">PTB ① update_pyth_feed(hermes_vaa) ▸ resolve_with_pyth&lt;T&gt;()</p>
+            <p>PTB ② accept_ownership ▸ set_distribution(μ,σ) ▸ add_liquidity&lt;T&gt;()</p>
+            <p>PTB ③ kiosk::place ▸ kiosk::list(position, ask)</p>
+          </div>
         </Reveal>
       </section>
 
