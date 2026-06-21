@@ -133,8 +133,8 @@ the live testnet deployment as fallback) so a redeploy only changes env:
 ```ts
 export const PACKAGE_ID     // VITE_PACKAGE_ID
 export const REGISTRY_ID    // VITE_REGISTRY_ID — the shared continuum::market::Registry
-export const COLLATERAL_TYPE// VITE_COLLATERAL_TYPE — coin type T for new markets; default is
-                             // real testnet USDC (Circle), not mock_usdc — see root CLAUDE.md
+export const COLLATERAL_TYPE// VITE_COLLATERAL_TYPE — coin type T for markets; Circle's real
+                             // testnet USDC (the protocol ships no coin of its own)
 export const CLOCK_ID = '0x6' // shared Clock, required by every resolution entry function
 export const target = (name) => `${PACKAGE_ID}::market::${name}` // Move-call target builder
 ```
@@ -379,8 +379,8 @@ heuristics. `isUserRejection` detects wallet declines so they render neutrally.
 ```
 VITE_API_BASE_URL=                # empty → Vite proxies /api + /socket.io to :3001
 VITE_SUI_NETWORK=testnet
-VITE_PACKAGE_ID=0x024febde4e1e8e5d7a259ec836de90ebd596289e89a38c199cb7414f56f00200
-VITE_REGISTRY_ID=0x3c585041337389132541ecee0c2d1425ad539e147d18ba1d34f768dd4f1c8cab
+VITE_PACKAGE_ID=0xd8240a55c47912a43a7d1ec6dfcc9d7627772b66227531719b08ebba103ec532
+VITE_REGISTRY_ID=0x8f9092d1a7e103f7aec4e50d69617cef85732590f4156daeefb14c6e9d70824d
 VITE_COLLATERAL_TYPE=0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC
 ```
 

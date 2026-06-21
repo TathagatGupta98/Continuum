@@ -6,7 +6,7 @@ import { Slider } from '@/components/ui/Slider'
 import { pYes, pNo } from '@/lib/math'
 
 /* ════════════════════════════════════════════════════════════════════════
-   Stage geometry — fixed viewBox, ETH-price domain matching Market #0
+   Stage geometry — fixed viewBox, illustrative ETH-price domain
    (prior μ=3500 σ=800; the verified on-chain trade: 2 USDC YES @ 3000
    moved μ 3500 → 3358 and σ 800 → 714).
    ════════════════════════════════════════════════════════════════════════ */
@@ -1238,7 +1238,7 @@ export default function Docs() {
         <SectionHead
           num="07 / Try it"
           title="Run your own strike"
-          sub="The same CDF the contracts compute on-chain, live under your cursor. Drag the strike across Market #0's curve."
+          sub="The same CDF the contracts compute on-chain, live under your cursor. Drag the strike across the curve."
         />
         <Playground />
       </section>

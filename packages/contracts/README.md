@@ -31,7 +31,8 @@ a real-world final price**, and fees are distributed MasterChef-style.
 | `fixed_point.move`    | Signed WAD (1e18) fixed-point `Fp` over `u256`.                     |
 | `gaussian.move`       | PDF / CDF / erf / exp / sqrt — port of `math_core.rs`.              |
 | `market.move`         | `Registry`, `Market<T>`, `Position`, LP accounting, trading, settle.|
-| `mock_usdc.move`      | 6-decimal test collateral coin + faucet.                            |
+| `position_market.move`| Kiosk + `TransferPolicy<Position>` — tradeable positions.           |
+| `tests/test_coin.move`| `#[test_only]` 6-decimal coin for tests — NOT in the published pkg. |
 
 ## Build & test
 

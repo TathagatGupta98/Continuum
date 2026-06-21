@@ -37,7 +37,7 @@ export interface Market {
   minVarianceBound: number
   // Sui shared `Market<T>` object id (replaces the three EVM proxy addresses).
   objectId: string
-  // Fully-qualified collateral coin type `T`, e.g. `0x..::mock_usdc::MOCK_USDC`.
+  // Fully-qualified collateral coin type `T`, e.g. `0x..::usdc::USDC`.
   collateralType: string
   isResolved: boolean
   // Externally-observed settlement price (signed). Win/lose is per-position:

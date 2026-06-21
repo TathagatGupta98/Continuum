@@ -50,7 +50,7 @@ model Market {
   minVarianceBound  Float
   // Sui shared `Market<T>` object id (replaces the three EVM proxy addresses).
   objectId          String     @default("")
-  // Fully-qualified collateral coin type `T`, e.g. `0x..::mock_usdc::MOCK_USDC`.
+  // Fully-qualified collateral coin type `T`, e.g. `0x..::usdc::USDC`.
   collateralType    String     @default("")
   isResolved        Boolean    @default(false)
   // Externally-observed settlement price (signed). Win/lose is per-position:

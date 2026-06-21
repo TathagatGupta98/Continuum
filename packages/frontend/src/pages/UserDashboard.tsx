@@ -1,9 +1,20 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useCurrentAccount, useCurrentWallet } from '@mysten/dapp-kit'
 import { usePortfolio } from '@/hooks/usePortfolio'
 import { useTheme } from '@/hooks/useTheme'
+import { usePositionListings, useUserKiosk } from '@/hooks/usePositionListings'
+import { usePositionMarketActions } from '@/hooks/usePositionMarketActions'
 import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
 import { ConnectButton } from '@/components/wallet/ConnectButton'
+import { SellPositionModal } from '@/components/market/SellPositionModal'
+import { getOwnedPositions, type OwnedPosition, type PositionListing } from '@/lib/sui'
+import { suiToMist, mistToSui } from '@/lib/math'
+import { useToast } from '@/components/ui/Toast'
+
+/** Strikes from two sources (backend float vs on-chain WAD decode) match within ~1e-6. */
+const strikeEq = (a: number, b: number) => Math.abs(a - b) <= Math.max(1, Math.abs(a) * 1e-6)
 
 const DARK = {
   walletCard:      'bg-[rgba(10,10,10,0.55)] backdrop-blur-md border-[rgba(255,255,255,0.10)]',
@@ -56,6 +67,45 @@ export default function UserDashboard() {
   const { isDark } = useTheme()
   const T = isDark ? DARK : LIGHT
   const { data: portfolio, isLoading } = usePortfolio(address)
+  const { toast } = useToast()
+
+  // Secondary-market wiring: the viewer's active listings (to toggle Sell↔Delist)
+  // and the shared list/delist actions.
+  const { data: allListings = [] } = usePositionListings()
+  const { data: userKiosk } = useUserKiosk(address)
+  const actions = usePositionMarketActions()
+  const myListings = userKiosk ? allListings.filter((l) => l.kioskId === userKiosk.kioskId) : []
+  const myListingFor = (marketId: string, isYes: boolean, strike: number): PositionListing | undefined =>
+    myListings.find((l) => String(l.marketId) === String(marketId) && l.isYes === isYes && strikeEq(l.strike, strike))
+
+  // Sell flow: a portfolio row is an aggregate, so resolve the real owned
+  // `Position` object on click (list_position consumes that object), then open
+  // the modal with the live curve for context.
+  const [sellTarget, setSellTarget] = useState<{ pos: OwnedPosition; mu: number; sigma: number } | null>(null)
+  const [resolvingId, setResolvingId] = useState<string | null>(null)
+
+  const onSellClick = async (row: {
+    marketId: string
+    direction: 'ABOVE' | 'BELOW'
+    targetValueX: number
+    mu: number
+    sigma: number
+    rowId: string
+  }) => {
+    if (!address) return
+    setResolvingId(row.rowId)
+    try {
+      const owned = await getOwnedPositions(address, row.marketId)
+      const match = owned.find((o) => o.isYes === (row.direction === 'ABOVE') && strikeEq(o.targetX, row.targetValueX))
+      if (!match) {
+        toast('error', 'Couldn’t find this position to sell — it may already be listed.')
+        return
+      }
+      setSellTarget({ pos: match, mu: row.mu, sigma: row.sigma })
+    } finally {
+      setResolvingId(null)
+    }
+  }
 
   if (!address && connectionStatus === 'connecting') {
     return (
@@ -128,7 +178,7 @@ export default function UserDashboard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className={`border-b transition-colors duration-300 ${T.tableHead}`}>
-                  {['Market', 'Direction', 'Strike', 'Tokens', 'Stake', 'Value', 'P&L', 'Result'].map((h) => (
+                  {['Market', 'Direction', 'Strike', 'Tokens', 'Stake', 'Value', 'P&L', 'Result', 'Trade'].map((h) => (
                     <th
                       key={h}
                       className={`px-4 py-3 text-left text-[10px] font-display tracking-widest uppercase transition-colors duration-300 ${T.tableHeadTxt}`}
@@ -188,6 +238,55 @@ export default function UserDashboard() {
                       ) : (
                         <Badge variant="live">Active</Badge>
                       )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {(() => {
+                        const isYes = pos.direction === 'ABOVE'
+                        const listed = myListingFor(pos.marketId, isYes, pos.targetValueX)
+                        if (listed) {
+                          return (
+                            <div className="flex flex-col items-start gap-0.5">
+                              <Button
+                                variant="muted"
+                                size="sm"
+                                className="px-3 py-1"
+                                disabled={actions.busy}
+                                loading={actions.acting?.id === listed.positionId}
+                                onClick={() => actions.delist(listed.positionId)}
+                              >
+                                Delist
+                              </Button>
+                              <span className="font-mono text-[10px]" style={{ color: 'var(--accent-data)' }}>
+                                {mistToSui(listed.priceMist)} SUI
+                              </span>
+                            </div>
+                          )
+                        }
+                        if (pos.status !== 'active' || pos.market?.isResolved) {
+                          return <span className="font-mono text-xs" style={{ color: 'var(--text-subtle)' }}>—</span>
+                        }
+                        return (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="px-3 py-1"
+                            disabled={actions.busy || resolvingId !== null}
+                            loading={resolvingId === pos.positionId}
+                            onClick={() =>
+                              onSellClick({
+                                marketId: pos.marketId,
+                                direction: pos.direction,
+                                targetValueX: pos.targetValueX,
+                                mu: pos.market?.currentMu ?? 0,
+                                sigma: pos.market?.currentSigma ?? 0,
+                                rowId: pos.positionId,
+                              })
+                            }
+                          >
+                            Sell
+                          </Button>
+                        )
+                      })()}
                     </td>
                   </tr>
                   )
@@ -260,6 +359,19 @@ export default function UserDashboard() {
           </div>
         )}
       </section>
+
+      <SellPositionModal
+        open={sellTarget !== null}
+        onClose={() => setSellTarget(null)}
+        position={sellTarget?.pos ?? null}
+        mu={sellTarget?.mu ?? 0}
+        sigma={sellTarget?.sigma ?? 0}
+        submitting={actions.step === 'listing'}
+        onList={(priceSui) => {
+          if (sellTarget) actions.list(sellTarget.pos.objectId, suiToMist(priceSui))
+          setSellTarget(null)
+        }}
+      />
     </div>
   )
 }

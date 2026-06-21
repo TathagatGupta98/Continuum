@@ -12,7 +12,7 @@
 ///
 /// The curve is demand-responsive: bettors move μ/σ (stake-weighted), liquidity
 /// providers never do. Positions are owned `Position` objects. Collateral is any
-/// `Coin<T>` (use the real USDC type on testnet, `mock_usdc` locally).
+/// `Coin<T>` — real USDC on testnet/mainnet (the protocol mints no collateral).
 ///
 /// Payouts and minted positions are sent to `ctx.sender()`; the lint that flags
 /// such transfers as non-composable is intentional here and suppressed.

@@ -10,7 +10,6 @@
  */
 
 export const MARKET_MODULE = 'market' as const;
-export const MOCK_USDC_MODULE = 'mock_usdc' as const;
 /** The Kiosk-based secondary market for `Position` objects. */
 export const POSITION_MARKET_MODULE = 'position_market' as const;
 

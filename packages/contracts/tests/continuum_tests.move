@@ -10,7 +10,7 @@ module continuum::continuum_tests {
     use continuum::fixed_point::{Self as fp, Fp};
     use continuum::gaussian;
     use continuum::market::{Self, Market, Registry, Position};
-    use continuum::mock_usdc::{Self, MOCK_USDC};
+    use continuum::test_coin::{Self, TEST_COIN};
     use continuum::position_market;
     use pyth::price;
     use pyth::i64 as pyth_i64;
@@ -97,14 +97,14 @@ module continuum::continuum_tests {
         // Publish: share the Registry, create the mock USDC currency.
         {
             market::init_for_testing(ts::ctx(&mut sc));
-            mock_usdc::init_for_testing(ts::ctx(&mut sc));
+            test_coin::init_for_testing(ts::ctx(&mut sc));
         };
 
-        // Create a market collateralized by MOCK_USDC (sigma_min = 0.001 WAD).
+        // Create a market collateralized by TEST_COIN (sigma_min = 0.001 WAD).
         ts::next_tx(&mut sc, admin);
         {
             let mut registry = ts::take_shared<Registry>(&sc);
-            market::create_market<MOCK_USDC>(
+            market::create_market<TEST_COIN>(
                 &mut registry,
                 b"Will ETH top $5k?",
                 1_000_000_000_000_000,
@@ -118,16 +118,16 @@ module continuum::continuum_tests {
         // Seed μ=0, σ=1; add 1000 USDC liquidity; buy YES at strike 0.
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
-            let mut cap = ts::take_from_sender<TreasuryCap<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
+            let mut cap = ts::take_from_sender<TreasuryCap<TEST_COIN>>(&sc);
 
             market::set_distribution(&mut m, 0, false, 1_000_000_000_000_000_000, ts::ctx(&mut sc));
 
-            let liq = mock_usdc::mint(&mut cap, 1_000_000_000, ts::ctx(&mut sc)); // 1000 USDC
+            let liq = test_coin::mint(&mut cap, 1_000_000_000, ts::ctx(&mut sc)); // 1000 USDC
             market::add_liquidity(&mut m, liq, ts::ctx(&mut sc));
             assert!(market::total_shares(&m) == 1_000_000_000 * 1_000_000_000_000, 0);
 
-            let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(&mut sc)); // 1 USDC
+            let stake = test_coin::mint(&mut cap, 1_000_000, ts::ctx(&mut sc)); // 1 USDC
             let c = clock::create_for_testing(ts::ctx(&mut sc)); // t=0 < resolves_at
             market::buy_yes(&mut m, stake, 0, false, &c, ts::ctx(&mut sc));
             clock::destroy_for_testing(c);
@@ -139,7 +139,7 @@ module continuum::continuum_tests {
         // The buy shifted the curve and minted a Position to the buyer.
         ts::next_tx(&mut sc, admin);
         {
-            let m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let m = ts::take_shared<Market<TEST_COIN>>(&sc);
             assert!(market::get_sigma(&m) > 0, 0);
             ts::return_shared(m);
         };
@@ -148,7 +148,7 @@ module continuum::continuum_tests {
         // scheduled close (resolves_at = 1000) has passed.
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let mut c = clock::create_for_testing(ts::ctx(&mut sc));
             clock::set_for_testing(&mut c, 1000);
             market::set_final_price(&mut m, 100_000_000_000_000_000_000, false, &c, ts::ctx(&mut sc));
@@ -160,7 +160,7 @@ module continuum::continuum_tests {
         // Claim the winning position for collateral.
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let pos = ts::take_from_sender<Position>(&sc);
             market::claim_winnings(&mut m, pos, ts::ctx(&mut sc));
             ts::return_shared(m);
@@ -169,7 +169,7 @@ module continuum::continuum_tests {
         // Payout coin landed with the claimer.
         ts::next_tx(&mut sc, admin);
         {
-            let payout = ts::take_from_sender<Coin<MOCK_USDC>>(&sc);
+            let payout = ts::take_from_sender<Coin<TEST_COIN>>(&sc);
             assert!(coin::value(&payout) > 0, 0);
             ts::return_to_sender(&sc, payout);
         };
@@ -185,13 +185,13 @@ module continuum::continuum_tests {
         let mut sc = ts::begin(admin);
         {
             market::init_for_testing(ts::ctx(&mut sc));
-            mock_usdc::init_for_testing(ts::ctx(&mut sc));
+            test_coin::init_for_testing(ts::ctx(&mut sc));
         };
 
         ts::next_tx(&mut sc, admin);
         {
             let mut registry = ts::take_shared<Registry>(&sc);
-            market::create_market<MOCK_USDC>(&mut registry, b"Timelock", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
+            market::create_market<TEST_COIN>(&mut registry, b"Timelock", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
             assert!(market::market_count(&registry) == 1, 0);
             assert!(market::market_exists(&registry, 0), 1);
             ts::return_shared(registry);
@@ -199,12 +199,12 @@ module continuum::continuum_tests {
 
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
-            let mut cap = ts::take_from_sender<TreasuryCap<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
+            let mut cap = ts::take_from_sender<TreasuryCap<TEST_COIN>>(&sc);
             market::set_distribution(&mut m, 0, false, 1_000_000_000_000_000_000, ts::ctx(&mut sc));
-            let liq = mock_usdc::mint(&mut cap, 1_000_000_000, ts::ctx(&mut sc));
+            let liq = test_coin::mint(&mut cap, 1_000_000_000, ts::ctx(&mut sc));
             market::add_liquidity(&mut m, liq, ts::ctx(&mut sc));
-            let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
+            let stake = test_coin::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
             let c = clock::create_for_testing(ts::ctx(&mut sc)); // t=0 < resolves_at
             market::buy_yes(&mut m, stake, 0, false, &c, ts::ctx(&mut sc));
             clock::destroy_for_testing(c);
@@ -215,7 +215,7 @@ module continuum::continuum_tests {
         // Propose at t=1000, then execute only after the 24h window elapses.
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let mut c = clock::create_for_testing(ts::ctx(&mut sc));
             clock::set_for_testing(&mut c, 1000);
             market::propose_resolution(&mut m, 100_000_000_000_000_000_000, false, &c, ts::ctx(&mut sc));
@@ -230,7 +230,7 @@ module continuum::continuum_tests {
 
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let pos = ts::take_from_sender<Position>(&sc);
             market::claim_winnings(&mut m, pos, ts::ctx(&mut sc));
             ts::return_shared(m);
@@ -247,12 +247,12 @@ module continuum::continuum_tests {
         ts::next_tx(&mut sc, admin);
         {
             let mut registry = ts::take_shared<Registry>(&sc);
-            market::create_market<MOCK_USDC>(&mut registry, b"M", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
+            market::create_market<TEST_COIN>(&mut registry, b"M", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
             ts::return_shared(registry);
         };
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let mut c = clock::create_for_testing(ts::ctx(&mut sc));
             clock::set_for_testing(&mut c, 1000);
             market::propose_resolution(&mut m, 100, false, &c, ts::ctx(&mut sc));
@@ -276,13 +276,13 @@ module continuum::continuum_tests {
         {
             let mut registry = ts::take_shared<Registry>(&sc);
             // Market closes at t = 10_000 ms.
-            market::create_market<MOCK_USDC>(&mut registry, b"Scheduled", 1_000_000_000_000_000, 10_000, b"", ts::ctx(&mut sc));
+            market::create_market<TEST_COIN>(&mut registry, b"Scheduled", 1_000_000_000_000_000, 10_000, b"", ts::ctx(&mut sc));
             assert!(market::market_exists(&registry, 0), 0);
             ts::return_shared(registry);
         };
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             assert!(market::resolves_at(&m) == 10_000, 0);
             let mut c = clock::create_for_testing(ts::ctx(&mut sc));
             // Now (5_000) is before the scheduled close → must abort (EMarketNotClosed = 18).
@@ -306,13 +306,13 @@ module continuum::continuum_tests {
         ts::next_tx(&mut sc, admin);
         {
             let mut registry = ts::take_shared<Registry>(&sc);
-            market::create_market<MOCK_USDC>(&mut registry, b"M", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
+            market::create_market<TEST_COIN>(&mut registry, b"M", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
             ts::return_shared(registry);
         };
 
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             market::transfer_ownership(&mut m, new_owner, ts::ctx(&mut sc));
             assert!(market::pending_owner(&m) == new_owner, 0);
             assert!(market::owner(&m) == admin, 1); // not yet effective
@@ -321,7 +321,7 @@ module continuum::continuum_tests {
 
         ts::next_tx(&mut sc, new_owner);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             market::accept_ownership(&mut m, ts::ctx(&mut sc));
             assert!(market::owner(&m) == new_owner, 2);
             ts::return_shared(m);
@@ -331,29 +331,29 @@ module continuum::continuum_tests {
 
     // ── Tradeable positions (Kiosk + TransferPolicy) ──────────────────────
 
-    /// Publish the protocol + the position TransferPolicy, create a MOCK_USDC
+    /// Publish the protocol + the position TransferPolicy, create a TEST_COIN
     /// market closing at `resolves_at`, seed it, add liquidity, and buy a YES
     /// position at strike 0. Leaves `admin` holding one `Position`.
     fun setup_and_buy(sc: &mut ts::Scenario, admin: address, resolves_at: u64) {
         {
             market::init_for_testing(ts::ctx(sc));
-            mock_usdc::init_for_testing(ts::ctx(sc));
+            test_coin::init_for_testing(ts::ctx(sc));
             position_market::init_for_testing(ts::ctx(sc));
         };
         ts::next_tx(sc, admin);
         {
             let mut registry = ts::take_shared<Registry>(sc);
-            market::create_market<MOCK_USDC>(&mut registry, b"Kiosk market", 1_000_000_000_000_000, resolves_at, b"", ts::ctx(sc));
+            market::create_market<TEST_COIN>(&mut registry, b"Kiosk market", 1_000_000_000_000_000, resolves_at, b"", ts::ctx(sc));
             ts::return_shared(registry);
         };
         ts::next_tx(sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(sc);
-            let mut cap = ts::take_from_sender<TreasuryCap<MOCK_USDC>>(sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(sc);
+            let mut cap = ts::take_from_sender<TreasuryCap<TEST_COIN>>(sc);
             market::set_distribution(&mut m, 0, false, 1_000_000_000_000_000_000, ts::ctx(sc));
-            let liq = mock_usdc::mint(&mut cap, 1_000_000_000, ts::ctx(sc));
+            let liq = test_coin::mint(&mut cap, 1_000_000_000, ts::ctx(sc));
             market::add_liquidity(&mut m, liq, ts::ctx(sc));
-            let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(sc));
+            let stake = test_coin::mint(&mut cap, 1_000_000, ts::ctx(sc));
             let c = clock::create_for_testing(ts::ctx(sc)); // t=0 < resolves_at
             market::buy_yes(&mut m, stake, 0, false, &c, ts::ctx(sc));
             clock::destroy_for_testing(c);
@@ -387,7 +387,7 @@ module continuum::continuum_tests {
         // Buyer purchases the listed position while the market is open.
         ts::next_tx(&mut sc, buyer);
         {
-            let m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let mut k = ts::take_shared<Kiosk>(&sc);
             let policy = ts::take_shared<TransferPolicy<Position>>(&sc);
             let pay = coin::mint_for_testing<SUI>(5_000_000, ts::ctx(&mut sc));
@@ -421,7 +421,7 @@ module continuum::continuum_tests {
         // Resolve the market (now past its scheduled close).
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let mut c = clock::create_for_testing(ts::ctx(&mut sc));
             clock::set_for_testing(&mut c, 1000);
             market::set_final_price(&mut m, 100_000_000_000_000_000_000, false, &c, ts::ctx(&mut sc));
@@ -431,7 +431,7 @@ module continuum::continuum_tests {
         // Purchase must abort with EMarketResolved (= 1): a settled position cannot be sold.
         ts::next_tx(&mut sc, buyer);
         {
-            let m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let mut k = ts::take_shared<Kiosk>(&sc);
             let policy = ts::take_shared<TransferPolicy<Position>>(&sc);
             let pay = coin::mint_for_testing<SUI>(5_000_000, ts::ctx(&mut sc));
@@ -456,7 +456,7 @@ module continuum::continuum_tests {
         ts::next_tx(&mut sc, admin);
         {
             let mut registry = ts::take_shared<Registry>(&sc);
-            market::create_market<MOCK_USDC>(&mut registry, b"Other", 1_000_000_000_000_000, 1_000_000, b"", ts::ctx(&mut sc));
+            market::create_market<TEST_COIN>(&mut registry, b"Other", 1_000_000_000_000_000, 1_000_000, b"", ts::ctx(&mut sc));
             ts::return_shared(registry);
         };
 
@@ -465,7 +465,7 @@ module continuum::continuum_tests {
         {
             let registry = ts::take_shared<Registry>(&sc);
             let m1_addr = market::get_market(&registry, 1);
-            let m1 = ts::take_shared_by_id<Market<MOCK_USDC>>(&sc, object::id_from_address(m1_addr));
+            let m1 = ts::take_shared_by_id<Market<TEST_COIN>>(&sc, object::id_from_address(m1_addr));
             let mut k = ts::take_shared<Kiosk>(&sc);
             let policy = ts::take_shared<TransferPolicy<Position>>(&sc);
             let pay = coin::mint_for_testing<SUI>(5_000_000, ts::ctx(&mut sc));
@@ -491,9 +491,9 @@ module continuum::continuum_tests {
         // to the buyer.
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
-            let mut cap = ts::take_from_sender<TreasuryCap<MOCK_USDC>>(&sc);
-            let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
+            let mut cap = ts::take_from_sender<TreasuryCap<TEST_COIN>>(&sc);
+            let stake = test_coin::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
             let c = clock::create_for_testing(ts::ctx(&mut sc)); // t=0 < resolves_at
             market::buy_yes(&mut m, stake, 0, false, &c, ts::ctx(&mut sc));
             clock::destroy_for_testing(c);
@@ -511,7 +511,7 @@ module continuum::continuum_tests {
         // because the proved position is not the item being transferred.
         ts::next_tx(&mut sc, buyer);
         {
-            let m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let mut k = ts::take_shared<Kiosk>(&sc);
             let policy = ts::take_shared<TransferPolicy<Position>>(&sc);
             let decoy = ts::take_from_sender<Position>(&sc);
@@ -539,7 +539,7 @@ module continuum::continuum_tests {
         // Resolve YES wins (final 100 ≥ strike 0).
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let mut c = clock::create_for_testing(ts::ctx(&mut sc));
             clock::set_for_testing(&mut c, 1000);
             market::set_final_price(&mut m, 100_000_000_000_000_000_000, false, &c, ts::ctx(&mut sc));
@@ -549,7 +549,7 @@ module continuum::continuum_tests {
         // Owner reclaims the listed position from the kiosk and redeems it in one call.
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let mut k = ts::take_shared<Kiosk>(&sc);
             let cap = ts::take_from_sender<KioskOwnerCap>(&sc);
             position_market::take_and_claim(&mut k, &cap, &mut m, pos_id, ts::ctx(&mut sc));
@@ -560,7 +560,7 @@ module continuum::continuum_tests {
         // Payout coin landed with the claimer.
         ts::next_tx(&mut sc, admin);
         {
-            let payout = ts::take_from_sender<Coin<MOCK_USDC>>(&sc);
+            let payout = ts::take_from_sender<Coin<TEST_COIN>>(&sc);
             assert!(coin::value(&payout) > 0, 0);
             ts::return_to_sender(&sc, payout);
         };
@@ -577,19 +577,19 @@ module continuum::continuum_tests {
         let mut sc = ts::begin(admin);
         {
             market::init_for_testing(ts::ctx(&mut sc));
-            mock_usdc::init_for_testing(ts::ctx(&mut sc));
+            test_coin::init_for_testing(ts::ctx(&mut sc));
         };
         ts::next_tx(&mut sc, admin);
         {
             let mut registry = ts::take_shared<Registry>(&sc);
-            market::create_market<MOCK_USDC>(&mut registry, b"Closes", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
+            market::create_market<TEST_COIN>(&mut registry, b"Closes", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
             ts::return_shared(registry);
         };
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
-            let mut cap = ts::take_from_sender<TreasuryCap<MOCK_USDC>>(&sc);
-            let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
+            let mut cap = ts::take_from_sender<TreasuryCap<TEST_COIN>>(&sc);
+            let stake = test_coin::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
             let mut c = clock::create_for_testing(ts::ctx(&mut sc));
             clock::set_for_testing(&mut c, 1000); // now == resolves_at → closed (EMarketClosed = 22)
             market::buy_yes(&mut m, stake, 0, false, &c, ts::ctx(&mut sc));
@@ -608,17 +608,17 @@ module continuum::continuum_tests {
         let mut sc = ts::begin(admin);
         {
             market::init_for_testing(ts::ctx(&mut sc));
-            mock_usdc::init_for_testing(ts::ctx(&mut sc));
+            test_coin::init_for_testing(ts::ctx(&mut sc));
         };
         ts::next_tx(&mut sc, admin);
         {
             let mut registry = ts::take_shared<Registry>(&sc);
-            market::create_market<MOCK_USDC>(&mut registry, b"Resolved", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
+            market::create_market<TEST_COIN>(&mut registry, b"Resolved", 1_000_000_000_000_000, 1000, b"", ts::ctx(&mut sc));
             ts::return_shared(registry);
         };
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let mut c = clock::create_for_testing(ts::ctx(&mut sc));
             clock::set_for_testing(&mut c, 1000);
             market::set_final_price(&mut m, 100_000_000_000_000_000_000, false, &c, ts::ctx(&mut sc));
@@ -628,9 +628,9 @@ module continuum::continuum_tests {
         // Attempt to buy a guaranteed winner after resolution → EAlreadyResolved (9).
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
-            let mut cap = ts::take_from_sender<TreasuryCap<MOCK_USDC>>(&sc);
-            let stake = mock_usdc::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
+            let mut cap = ts::take_from_sender<TreasuryCap<TEST_COIN>>(&sc);
+            let stake = test_coin::mint(&mut cap, 1_000_000, ts::ctx(&mut sc));
             let mut c = clock::create_for_testing(ts::ctx(&mut sc));
             clock::set_for_testing(&mut c, 1001);
             market::buy_yes(&mut m, stake, 0, false, &c, ts::ctx(&mut sc));
@@ -653,12 +653,12 @@ module continuum::continuum_tests {
             let mut registry = ts::take_shared<Registry>(&sc);
             // A 32-byte feed id makes this a trustless, Pyth-settled market.
             let feed = x"0000000000000000000000000000000000000000000000000000000000000001";
-            market::create_market<MOCK_USDC>(&mut registry, b"BTC", 1_000_000_000_000_000, 1000, feed, ts::ctx(&mut sc));
+            market::create_market<TEST_COIN>(&mut registry, b"BTC", 1_000_000_000_000_000, 1000, feed, ts::ctx(&mut sc));
             ts::return_shared(registry);
         };
         ts::next_tx(&mut sc, admin);
         {
-            let mut m = ts::take_shared<Market<MOCK_USDC>>(&sc);
+            let mut m = ts::take_shared<Market<TEST_COIN>>(&sc);
             let mut c = clock::create_for_testing(ts::ctx(&mut sc));
             clock::set_for_testing(&mut c, 1000);
             // Owner attempts a manual override → EFeedBoundMarket (23).

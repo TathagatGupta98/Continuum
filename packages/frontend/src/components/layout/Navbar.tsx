@@ -4,6 +4,7 @@ import { ConnectButton } from '@/components/wallet/ConnectButton'
 
 const navLinks = [
   { to: '/markets', label: 'Markets' },
+  { to: '/trade', label: 'Trade Positions' },
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/docs', label: 'Docs' },
 ]

@@ -42,7 +42,7 @@ const envSchema = z.object({
   // The shared `Registry` object id created at publish.
   REGISTRY_ID: z.string().regex(SUI_HEX, 'REGISTRY_ID must be a 0x-prefixed Sui object id'),
   // Fully-qualified collateral coin type used by markets, e.g.
-  // `0x<pkg>::mock_usdc::MOCK_USDC` locally or the real USDC type on mainnet.
+  // `the real testnet/mainnet USDC coin type, e.g. `0x..::usdc::USDC`.
   COLLATERAL_TYPE: z.string().min(1).default(''),
 
   // ─── Event poller ───

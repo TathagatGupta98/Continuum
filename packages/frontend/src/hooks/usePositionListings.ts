@@ -1,11 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
 import { getPositionListings, getUserKiosk } from '@/lib/sui'
 
-/** Active `Position` listings on the Kiosk secondary market for one market. */
+/**
+ * Active `Position` listings on the Kiosk secondary market. Pass a `marketId` for
+ * one market (the per-market panel), or omit it for **every** market (the global
+ * marketplace).
+ */
 export function usePositionListings(marketId?: string | number) {
   return useQuery({
     queryKey: ['position-listings', String(marketId ?? 'all')],
-    enabled: marketId != null,
     staleTime: 10_000,
     refetchInterval: 20_000,
     queryFn: () => getPositionListings(marketId),

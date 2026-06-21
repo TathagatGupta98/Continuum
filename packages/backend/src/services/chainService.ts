@@ -110,7 +110,7 @@ export async function getMarketOwner(objectId: string): Promise<string> {
 
 /**
  * Extracts the collateral coin type `T` from a `Market<T>` object's type string,
- * e.g. `0x..::market::Market<0x..::mock_usdc::MOCK_USDC>` → the inner type.
+ * e.g. `0x..::market::Market<0x..::usdc::USDC>` → the inner type.
  */
 export async function getCollateralType(objectId: string): Promise<string> {
   const obj = await suiClient.getObject({ id: objectId, options: { showType: true } });
