@@ -379,8 +379,8 @@ heuristics. `isUserRejection` detects wallet declines so they render neutrally.
 ```
 VITE_API_BASE_URL=                # empty → Vite proxies /api + /socket.io to :3001
 VITE_SUI_NETWORK=testnet
-VITE_PACKAGE_ID=0xd8240a55c47912a43a7d1ec6dfcc9d7627772b66227531719b08ebba103ec532
-VITE_REGISTRY_ID=0x8f9092d1a7e103f7aec4e50d69617cef85732590f4156daeefb14c6e9d70824d
+VITE_PACKAGE_ID=0x2863e293480bbe7acaaea17839492ff4f887f4eca0008f8331ec3fc15b397b31
+VITE_REGISTRY_ID=0xb17e6ec492a09bbff6f08fa74e950e3c4580e4ccf6bb11769f39acd38132bcdd
 VITE_COLLATERAL_TYPE=0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC
 ```
 

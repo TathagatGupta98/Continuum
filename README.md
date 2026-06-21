@@ -25,11 +25,11 @@ The core of **Continuum** translates the continuous Gaussian distribution into a
 
 ## Addresses (Sui Testnet)
 
-`Package:` [0xd8240a55c47912a43a7d1ec6dfcc9d7627772b66227531719b08ebba103ec532](https://suiscan.xyz/testnet/object/0xd8240a55c47912a43a7d1ec6dfcc9d7627772b66227531719b08ebba103ec532)
+`Package:` [0x2863e293480bbe7acaaea17839492ff4f887f4eca0008f8331ec3fc15b397b31](https://suiscan.xyz/testnet/object/0x2863e293480bbe7acaaea17839492ff4f887f4eca0008f8331ec3fc15b397b31)
 
-`Registry (shared):` [0x8f9092d1a7e103f7aec4e50d69617cef85732590f4156daeefb14c6e9d70824d](https://suiscan.xyz/testnet/object/0x8f9092d1a7e103f7aec4e50d69617cef85732590f4156daeefb14c6e9d70824d)
+`Registry (shared):` [0xb17e6ec492a09bbff6f08fa74e950e3c4580e4ccf6bb11769f39acd38132bcdd](https://suiscan.xyz/testnet/object/0xb17e6ec492a09bbff6f08fa74e950e3c4580e4ccf6bb11769f39acd38132bcdd)
 
-`TransferPolicy<Position> (shared):` [0xa04784f7f6a63dcb9902b759e0e366eb1343388bb690588fd51b949733e34791](https://suiscan.xyz/testnet/object/0xa04784f7f6a63dcb9902b759e0e366eb1343388bb690588fd51b949733e34791)
+`TransferPolicy<Position> (shared):` [0x3f5a208082982f916c2c37ceb4403f8be0347f18fce5c240c1b8d2aa5aa2dd93](https://suiscan.xyz/testnet/object/0x3f5a208082982f916c2c37ceb4403f8be0347f18fce5c240c1b8d2aa5aa2dd93)
 
 `Collateral type:` `0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC` (testnet USDC)
 
@@ -451,9 +451,9 @@ sui client call --package $PACKAGE_ID --module market --function create_market \
 
 | Object | Id |
 |--------|----|
-| Package | `0xd8240a55c47912a43a7d1ec6dfcc9d7627772b66227531719b08ebba103ec532` |
-| Registry (shared) | `0x8f9092d1a7e103f7aec4e50d69617cef85732590f4156daeefb14c6e9d70824d` |
-| TransferPolicy\<Position\> (shared) | `0xa04784f7f6a63dcb9902b759e0e366eb1343388bb690588fd51b949733e34791` |
+| Package | `0x2863e293480bbe7acaaea17839492ff4f887f4eca0008f8331ec3fc15b397b31` |
+| Registry (shared) | `0xb17e6ec492a09bbff6f08fa74e950e3c4580e4ccf6bb11769f39acd38132bcdd` |
+| TransferPolicy\<Position\> (shared) | `0x3f5a208082982f916c2c37ceb4403f8be0347f18fce5c240c1b8d2aa5aa2dd93` |
 | Collateral type | `0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC` (testnet USDC) |
 
 ---

@@ -16,15 +16,15 @@
 > collateral coin: the protocol now mints **no currency of its own** and runs entirely on real
 > testnet USDC. The package was redeployed; all ids below are the new instance, every pre-this
 > deploy id is obsolete):
-> - `PACKAGE_ID` = `0xd8240a55c47912a43a7d1ec6dfcc9d7627772b66227531719b08ebba103ec532`
-> - `REGISTRY_ID` (shared) = `0x8f9092d1a7e103f7aec4e50d69617cef85732590f4156daeefb14c6e9d70824d`
+> - `PACKAGE_ID` = `0x2863e293480bbe7acaaea17839492ff4f887f4eca0008f8331ec3fc15b397b31`
+> - `REGISTRY_ID` (shared) = `0xb17e6ec492a09bbff6f08fa74e950e3c4580e4ccf6bb11769f39acd38132bcdd`
 >   — **starts empty** (`market_count = 0`); no seed market is created at publish.
-> - `TransferPolicy<Position>` (shared) = `0xa04784f7f6a63dcb9902b759e0e366eb1343388bb690588fd51b949733e34791`
+> - `TransferPolicy<Position>` (shared) = `0x3f5a208082982f916c2c37ceb4403f8be0347f18fce5c240c1b8d2aa5aa2dd93`
 >   — created at publish by `position_market::init`, carries the market-open rule; required to
 >   confirm a Kiosk purchase of a `Position`. Its `TransferPolicyCap` (owned by the deployer) =
->   `0x41e9d395eb1c96ffef9f75a9614ce4266dd612df8b56700f18a2f5b32adceddc`.
-> - `Publisher` (owned) = `0xc182916636d3b9fa39683a05943f2f134f9b5b296b864681c9661c9bd1067035`;
->   `UpgradeCap` (owned) = `0x0688bdd06d97564b0ff1cc528c0c4e310a1b76394ad278ad6a2612373b149899`.
+>   `0x350c839ae0a20398077f518dab1f2edec64d73ef47c9ddfe17bef6ce87a29574`.
+> - `Publisher` (owned) = `0x0ad43684996b890c21525d4f864c3f973a2bda968143c44ee1dd99d9851b3ed2`;
+>   `UpgradeCap` (owned) = `0xfbf976966e2d2a0400cde1da5b46784969c881f26c6c5c424f26b2c8e1029848`.
 > - `COLLATERAL_TYPE` = `0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC`
 >   — Circle's official **testnet USDC** (6 decimals). The protocol no longer ships a mock coin
 >   or a `TreasuryCap`; fund a wallet via faucet.circle.com. `Market<phantom T>` is generic, so

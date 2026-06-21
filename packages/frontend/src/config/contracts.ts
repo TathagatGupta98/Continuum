@@ -10,11 +10,11 @@ import { marketTarget, positionMarketTarget, MARKET_MODULE } from '@continuum/ty
  */
 export const PACKAGE_ID =
   (import.meta.env.VITE_PACKAGE_ID as string) ??
-  '0xd8240a55c47912a43a7d1ec6dfcc9d7627772b66227531719b08ebba103ec532'
+  '0x2863e293480bbe7acaaea17839492ff4f887f4eca0008f8331ec3fc15b397b31'
 
 export const REGISTRY_ID =
   (import.meta.env.VITE_REGISTRY_ID as string) ??
-  '0x8f9092d1a7e103f7aec4e50d69617cef85732590f4156daeefb14c6e9d70824d'
+  '0xb17e6ec492a09bbff6f08fa74e950e3c4580e4ccf6bb11769f39acd38132bcdd'
 
 // Circle's official testnet USDC — anyone can fund it via faucet.circle.com or
 // `sui client faucet --coin-type usdc`, no protocol-controlled mint required.
@@ -33,7 +33,7 @@ export const CLOCK_ID = '0x6'
  */
 export const TRANSFER_POLICY_ID =
   (import.meta.env.VITE_TRANSFER_POLICY_ID as string) ??
-  '0xa04784f7f6a63dcb9902b759e0e366eb1343388bb690588fd51b949733e34791'
+  '0x3f5a208082982f916c2c37ceb4403f8be0347f18fce5c240c1b8d2aa5aa2dd93'
 
 /** Sui framework Kiosk module + the canonical types we reference in PTBs. */
 export const KIOSK_TYPE = '0x2::kiosk::Kiosk'
