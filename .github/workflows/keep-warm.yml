@@ -1,0 +1,28 @@
+name: Keep backend warm
+
+# Render's free tier spins the instance down to zero after ~15 min of no
+# traffic, so the next visitor waits ~50s for a cold start (the "site looks
+# broken for a minute, then loads" symptom). Ping the health endpoint on a
+# schedule so the instance never goes to sleep.
+on:
+  schedule:
+    # Every 10 minutes. GitHub cron can drift a few minutes under load, which
+    # is why we ping at 10 (well under Render's ~15 min sleep window).
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/health
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 \
+              https://continuum-2.onrender.com/api/health) && \
+              echo "health -> $code" && [ "$code" = "200" ] && exit 0
+            echo "attempt $i failed (code=$code), retrying..."
+            sleep 15
+          done
+          echo "backend did not return 200 after 3 attempts" >&2
+          exit 1

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useCurrentAccount } from '@mysten/dapp-kit'
 import { useMarkets } from '@/hooks/useMarkets'
@@ -54,6 +54,19 @@ export default function Marketplace() {
   const [showCreate, setShowCreate] = useState(false)
 
   const { data: markets, isLoading, error } = useMarkets()
+
+  // The backend is on Render's free tier, which sleeps after ~15 min of no
+  // traffic and takes ~50s to cold-start. Surface a "waking up" hint once a
+  // load runs long so the wait reads as expected, not broken.
+  const [slowLoad, setSlowLoad] = useState(false)
+  useEffect(() => {
+    if (!isLoading) {
+      setSlowLoad(false)
+      return
+    }
+    const t = setTimeout(() => setSlowLoad(true), 3000)
+    return () => clearTimeout(t)
+  }, [isLoading])
 
   const filtered = (markets ?? []).filter((m) => {
     if (category !== 'All' && m.category !== category) return false
@@ -132,16 +145,25 @@ export default function Marketplace() {
 
       {/* Grid */}
       {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className={`h-[240px] border rounded animate-pulse transition-colors duration-300 ${T.skeleton}`} />
-          ))}
+        <div>
+          {slowLoad && (
+            <div className="text-center mb-6">
+              <p className={`font-mono text-xs transition-colors duration-300 ${T.subheading}`}>
+                Waking up the server&hellip; the free-tier backend sleeps after inactivity and can take up to a minute on the first request.
+              </p>
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className={`h-[240px] border rounded animate-pulse transition-colors duration-300 ${T.skeleton}`} />
+            ))}
+          </div>
         </div>
       ) : error ? (
         <div className="text-center py-20">
           <p className={`font-mono text-sm transition-colors duration-300 ${T.errorText}`}>Failed to load markets</p>
           <p className={`font-mono text-xs mt-2 transition-colors duration-300 ${T.errorSub}`}>
-            Make sure the backend is running on port 3001
+            The backend may be waking up &mdash; wait a moment and refresh.
           </p>
         </div>
       ) : filtered.length === 0 ? (
